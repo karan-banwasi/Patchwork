@@ -30,25 +30,15 @@ var checkCmd = &cobra.Command{
 
 		fmt.Printf("Found %d packages with available updates:\n\n", len(updates))
 		
-		var maxNameLen, maxIdLen, maxVersionLen int
-		for _, pkg := range updates {
-			if len(pkg.Name) > maxNameLen { maxNameLen = len(pkg.Name) }
-			if len(pkg.Id) > maxIdLen { maxIdLen = len(pkg.Id) }
-			if len(pkg.Version) > maxVersionLen { maxVersionLen = len(pkg.Version) }
-		}
-
-		if maxNameLen < 4 { maxNameLen = 4 }
-		if maxIdLen < 2 { maxIdLen = 2 }
-		if maxVersionLen < 7 { maxVersionLen = 7 }
+		maxNameLen, maxIdLen, maxVersionLen := getPackageColumnWidths(updates, 4, 2, 7)
 
 		headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds    %%s\n", maxNameLen, maxIdLen, maxVersionLen)
-		rowFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds -> %%s\n", maxNameLen, maxIdLen, maxVersionLen)
 		
 		fmt.Printf(headerFmt, "Name", "ID", "Version", "Available")
 		fmt.Printf(headerFmt, strings.Repeat("-", maxNameLen), strings.Repeat("-", maxIdLen), strings.Repeat("-", maxVersionLen), "---------")
 		
 		for _, pkg := range updates {
-			fmt.Printf(rowFmt, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion)
+			fmt.Printf("  %s\n", formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen))
 		}
 	},
 }

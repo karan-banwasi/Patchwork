@@ -58,24 +58,10 @@ var upgradeCmd = &cobra.Command{
 		// Map option strings back to package IDs
 		optionToID := make(map[string]string)
 
-		// Calculate padding for tabular alignment
-		var maxNameLen, maxIdLen, maxVersionLen int
-		for _, pkg := range updates {
-			if len(pkg.Name) > maxNameLen { maxNameLen = len(pkg.Name) }
-			if len(pkg.Id) > maxIdLen { maxIdLen = len(pkg.Id) }
-			if len(pkg.Version) > maxVersionLen { maxVersionLen = len(pkg.Version) }
-		}
-		
-		// Ensure minimum widths
-		if maxNameLen < 10 { maxNameLen = 10 }
-		if maxIdLen < 10 { maxIdLen = 10 }
-		if maxVersionLen < 5 { maxVersionLen = 5 }
-
-		// Dynamic format string for perfectly aligned columns
-		formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds -> %%s", maxNameLen, maxIdLen, maxVersionLen)
+		maxNameLen, maxIdLen, maxVersionLen := getPackageColumnWidths(updates, 10, 10, 5)
 
 		for _, pkg := range updates {
-			label := fmt.Sprintf(formatStr, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion)
+			label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen)
 			options = append(options, label)
 			optionToID[label] = pkg.Id
 		}

@@ -1,9 +1,26 @@
 package winget
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
+
+// wingetPath resolves the absolute path to the winget executable
+// in a trusted location to prevent PATH hijacking.
+func wingetPath() (string, error) {
+	localAppData := os.Getenv("LOCALAPPDATA")
+	if localAppData == "" {
+		return "", fmt.Errorf("LOCALAPPDATA environment variable is not set")
+	}
+	path := filepath.Join(localAppData, "Microsoft", "WindowsApps", "winget.exe")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("winget.exe not found in trusted location: %w", err)
+	}
+	return path, nil
+}
 
 // PackageUpdate represents an available update for a package.
 type PackageUpdate struct {
@@ -16,10 +33,14 @@ type PackageUpdate struct {
 
 // GetAvailableUpdates runs `winget upgrade` to fetch packages that have updates available.
 func GetAvailableUpdates() ([]PackageUpdate, error) {
-	cmd := exec.Command("winget", "upgrade")
+	exe, err := wingetPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(exe, "upgrade")
 	
 	// Winget might return non-zero exit code if no updates are found or due to warnings
-	output, _ := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
 
 	// A very basic check to see if no updates were found
@@ -29,7 +50,14 @@ func GetAvailableUpdates() ([]PackageUpdate, error) {
 		return []PackageUpdate{}, nil
 	}
 
-	return parseWingetOutput(outputStr), nil
+	updates := parseWingetOutput(outputStr)
+
+	// If winget failed and we couldn't parse any updates, propagate the error.
+	if err != nil && len(updates) == 0 {
+		return nil, fmt.Errorf("winget execution failed: %w (output: %s)", err, strings.TrimSpace(outputStr))
+	}
+
+	return updates, nil
 }
 
 // parseWingetOutput parses the tabular output from winget.
