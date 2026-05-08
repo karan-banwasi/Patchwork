@@ -42,7 +42,8 @@ jobs:
           echo "Previous tag: $LATEST_TAG"
           echo "New tag: $NEW_TAG"
           
-          # .syso resource files are already committed to the repo, no need to run go generate
+          # Generate Windows resources (runs go-winres dynamically)
+          go generate ./...
           
           # Cross-compile for Windows natively from Ubuntu for maximum speed
           GOOS=windows GOARCH=amd64 go build -o pw.exe main.go
