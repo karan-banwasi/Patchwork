@@ -19,7 +19,7 @@ Patchwork is a Windows CLI utility designed to iterate through packages that hav
 - `cmd/`: Houses the Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`).
 - `internal/`: Contains core logic separated by package managers.
   - `internal/winget/`: Houses logic for interacting with the `winget` CLI to fetch updates and perform upgrades.
-    - **Note on Winget Parsing**: `winget upgrade` often outputs ANSI progress spinners on the same line as the table headers. The parser explicitly slices off characters preceding the "Name" column and dynamically calculates padded `fmt.Sprintf` boundaries to display perfectly aligned, native-looking tables.
+    - **Note on Winget Parsing**: `winget upgrade` often outputs ANSI progress spinners and color codes. The parser strips ANSI escape sequences, explicitly slices off characters preceding the "Name" column, and validates column ordering. Exec calls also separate `Stdout` and `Stderr` to ensure warnings do not corrupt the parsed table. It then dynamically calculates padded `fmt.Sprintf` boundaries to display perfectly aligned, native-looking tables.
   - Future modules will be placed in their respective `internal/<manager>` directories.
 
 ## Development Guidelines

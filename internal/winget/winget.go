@@ -1,10 +1,12 @@
 package winget
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -13,11 +15,14 @@ import (
 func wingetPath() (string, error) {
 	localAppData := os.Getenv("LOCALAPPDATA")
 	if localAppData == "" {
-		return "", fmt.Errorf("LOCALAPPDATA environment variable is not set")
+		return exec.LookPath("winget.exe")
 	}
 	path := filepath.Join(localAppData, "Microsoft", "WindowsApps", "winget.exe")
 	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("winget.exe not found in trusted location: %w", err)
+		if fallbackPath, errLook := exec.LookPath("winget.exe"); errLook == nil {
+			return fallbackPath, nil
+		}
+		return "", fmt.Errorf("winget.exe not found in trusted location or PATH: %w", err)
 	}
 	return path, nil
 }
@@ -39,9 +44,13 @@ func GetAvailableUpdates() ([]PackageUpdate, error) {
 	}
 	cmd := exec.Command(exe, "upgrade")
 	
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	// We deliberately ignore stderr to prevent warnings from corrupting the table output
+	
 	// Winget might return non-zero exit code if no updates are found or due to warnings
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
+	err = cmd.Run()
+	outputStr := stdout.String()
 
 	// A very basic check to see if no updates were found
 	if strings.Contains(outputStr, "No installed package found matching input criteria.") || 
@@ -50,7 +59,10 @@ func GetAvailableUpdates() ([]PackageUpdate, error) {
 		return []PackageUpdate{}, nil
 	}
 
-	updates := parseWingetOutput(outputStr)
+	updates, parseErr := parseWingetOutput(outputStr)
+	if parseErr != nil {
+		return nil, parseErr
+	}
 
 	// If winget failed and we couldn't parse any updates, propagate the error.
 	if err != nil && len(updates) == 0 {
@@ -62,9 +74,13 @@ func GetAvailableUpdates() ([]PackageUpdate, error) {
 
 // parseWingetOutput parses the tabular output from winget.
 // Winget outputs variable-spaced columns, so we find the column offsets from the header.
-func parseWingetOutput(output string) []PackageUpdate {
+func parseWingetOutput(output string) ([]PackageUpdate, error) {
 	var updates []PackageUpdate
-	lines := strings.Split(output, "\n")
+	
+	var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+	cleanOutput := ansiEscape.ReplaceAllString(output, "")
+	
+	lines := strings.Split(cleanOutput, "\n")
 	
 	headerLineIdx := -1
 	for i, line := range lines {
@@ -75,7 +91,7 @@ func parseWingetOutput(output string) []PackageUpdate {
 	}
 
 	if headerLineIdx == -1 || headerLineIdx+1 >= len(lines) {
-		return updates
+		return updates, nil
 	}
 
 	headerLine := lines[headerLineIdx]
@@ -93,7 +109,12 @@ func parseWingetOutput(output string) []PackageUpdate {
 	sourceIdx := strings.Index(headerLine, "Source")
 
 	if idIdx == -1 || versionIdx == -1 || availableIdx == -1 || sourceIdx == -1 {
-		return updates // Could not parse headers
+		return updates, nil // Could not parse headers
+	}
+	
+	// Validate that columns are in the expected order
+	if !(idIdx > 0 && versionIdx > idIdx && availableIdx > versionIdx && sourceIdx > availableIdx) {
+		return nil, fmt.Errorf("winget header columns are in an unexpected order")
 	}
 
 	// The row after headers should be a line of dashes, so we start at +2
@@ -103,44 +124,41 @@ func parseWingetOutput(output string) []PackageUpdate {
 			continue // skip empty lines or footer
 		}
 
-		// Some footers start with a number or are not package rows. But package rows will have enough length.
-		if len(line) < availableIdx {
-			continue // skip lines that are too short to be valid rows
-		}
-
 		// Clean the line from any preceding carriage returns that winget might leave
 		if lastCR := strings.LastIndex(line, "\r"); lastCR != -1 {
 			line = line[lastCR+1:]
 		}
 
-		// If the line is suddenly too short after cleaning
-		if len(line) < availableIdx {
-			continue
+		runes := []rune(line)
+
+		// Some footers start with a number or are not package rows. But package rows will have enough length.
+		if len(runes) < availableIdx {
+			continue // skip lines that are too short to be valid rows
 		}
 
-		name := strings.TrimSpace(line[0:idIdx])
+		name := strings.TrimSpace(string(runes[0:idIdx]))
 		
 		id := ""
-		if len(line) > versionIdx {
-			id = strings.TrimSpace(line[idIdx:versionIdx])
+		if len(runes) > versionIdx {
+			id = strings.TrimSpace(string(runes[idIdx:versionIdx]))
 		} else {
-			id = strings.TrimSpace(line[idIdx:])
+			id = strings.TrimSpace(string(runes[idIdx:]))
 		}
 		
 		version := ""
-		if len(line) > availableIdx {
-			version = strings.TrimSpace(line[versionIdx:availableIdx])
-		} else if len(line) > versionIdx {
-			version = strings.TrimSpace(line[versionIdx:])
+		if len(runes) > availableIdx {
+			version = strings.TrimSpace(string(runes[versionIdx:availableIdx]))
+		} else if len(runes) > versionIdx {
+			version = strings.TrimSpace(string(runes[versionIdx:]))
 		}
 		
 		available := ""
 		source := ""
-		if len(line) > sourceIdx {
-			available = strings.TrimSpace(line[availableIdx:sourceIdx])
-			source = strings.TrimSpace(line[sourceIdx:])
-		} else if len(line) > availableIdx {
-			available = strings.TrimSpace(line[availableIdx:])
+		if len(runes) > sourceIdx {
+			available = strings.TrimSpace(string(runes[availableIdx:sourceIdx]))
+			source = strings.TrimSpace(string(runes[sourceIdx:]))
+		} else if len(runes) > availableIdx {
+			available = strings.TrimSpace(string(runes[availableIdx:]))
 		}
 
 		// Ignore non-package lines that might get caught at the bottom
@@ -156,5 +174,5 @@ func parseWingetOutput(output string) []PackageUpdate {
 		}
 	}
 
-	return updates
+	return updates, nil
 }

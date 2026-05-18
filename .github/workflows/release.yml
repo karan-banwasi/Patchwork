@@ -6,7 +6,25 @@ on:
       - main
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          
+      - name: Run go vet
+        run: go vet ./...
+        
+      - name: Run go test
+        run: go test ./...
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -46,7 +64,7 @@ jobs:
           go generate ./...
           
           # Cross-compile for Windows natively from Ubuntu for maximum speed
-          GOOS=windows GOARCH=amd64 go build -o pw.exe main.go
+          GOOS=windows GOARCH=amd64 go build -ldflags "-X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
           
           # Configure Git
           git config user.name "github-actions[bot]"

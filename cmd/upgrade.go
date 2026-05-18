@@ -17,6 +17,11 @@ var upgradeCmd = &cobra.Command{
 	Short: "Upgrade available packages",
 	Long:  `Upgrade a specific package by providing its ID, or upgrade all packages using the --all flag.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if upgradeAll && len(args) > 0 {
+			fmt.Fprintln(os.Stderr, "Error: --all and a package ID are mutually exclusive.")
+			os.Exit(1)
+		}
+
 		if upgradeAll {
 			fmt.Println("Upgrading all available packages...")
 			err := winget.UpgradeAll()
@@ -66,9 +71,6 @@ var upgradeCmd = &cobra.Command{
 			optionToID[label] = pkg.Id
 		}
 
-		exitOption := "❌ Cancel (Do not upgrade any packages)"
-		options = append(options, exitOption)
-
 		var selectedOptions []string
 		prompt := &survey.MultiSelect{
 			Message: "Select packages to upgrade (Space to select, Enter to submit, submit empty to cancel):",
@@ -85,27 +87,24 @@ var upgradeCmd = &cobra.Command{
 			return
 		}
 
-		// Check if the user selected the cancel option
-		for _, opt := range selectedOptions {
-			if opt == exitOption {
-				fmt.Println("Cancel option selected. Aborting upgrades.")
-				return
-			}
-		}
-
 		fmt.Printf("Upgrading %d packages...\n", len(selectedOptions))
+		hadError := false
 		for _, opt := range selectedOptions {
 			id := optionToID[opt]
 			fmt.Printf("\n--- Upgrading: %s ---\n", id)
 			err := winget.UpgradePackage(id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", id, err)
+				hadError = true
 			} else {
 				fmt.Printf("Successfully upgraded %s\n", id)
 			}
 		}
 		
 		fmt.Println("\nAll selected upgrades have completed.")
+		if hadError {
+			os.Exit(1)
+		}
 	},
 }
 
