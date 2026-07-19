@@ -29,5 +29,7 @@ Patchwork is a Windows CLI utility designed to iterate through packages that hav
 - **UI Consistency**: Maintain tabular alignment and spacing for terminal output to match the native feel of tools like `winget`.
 
 ## Future Roadmap
+- Publish `Patchwork` package manifest to `microsoft/winget-pkgs` for native `winget install Patchwork` support.
 - Expand support beyond Winget (Scoop, Chocolatey).
 - Add functionality to group updates by package manager.
+

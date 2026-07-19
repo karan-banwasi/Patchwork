@@ -9,21 +9,27 @@ A CLI tool to better manage package updates. Built natively in Go for Windows.
 - **Winget Integration**: Leverages Windows Package Manager (`winget`) under the hood, parsing its output robustly to provide a seamless CLI experience.
 
 ## Installation
-Ensure you have Go installed on your system.
 
-Clone the repository and run:
-```powershell
-go mod tidy
-go build -o pw.exe main.go
-```
-
-### Global Installation (Optional)
-If you want to run `pw` from anywhere without using the `.\` prefix, you can build the executable directly into your Go binaries folder (which is typically already on your system's PATH):
+### Quick Install (PowerShell)
+You can install `pw` directly using PowerShell (no Go compiler or Git required):
 
 ```powershell
-go build -o $env:USERPROFILE\go\bin\pw.exe main.go
+irm https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.ps1 | iex
 ```
-Now you can simply use `pw check` and `pw upgrade` globally.
+
+This automatically downloads the latest release binary (`pw.exe`), installs it to `%LOCALAPPDATA%\Programs\Patchwork\bin`, and adds it to your User `PATH`.
+
+### Download Pre-compiled Binary
+Alternatively, download `pw.exe` directly from the [GitHub Releases](https://github.com/karan-banwasi/Patchwork/releases) page and place it in any folder in your system's `PATH`.
+
+### Building from Source (Developers)
+If you have Go installed, clone the repository and build:
+
+```powershell
+go build -o $env:USERPROFILE\go\bin\pw.exe .
+```
+
+*(Or run `go install .` to install as `patchwork.exe`.)*
 
 ## Development
 
@@ -38,8 +44,6 @@ go generate ./...
 ```
 
 ## Usage
-
-> **Note:** If you did not perform the **Global Installation** above, you will need to prefix the commands with `.\` (e.g., `.\pw check`) if you are running them from the project directory in PowerShell.
 
 **Check for available updates:**
 ```powershell
@@ -65,3 +69,9 @@ pw upgrade --all
 ```powershell
 pw --version
 ```
+
+## Roadmap
+- [ ] Publish official `Patchwork` package to Windows Package Manager repository (`microsoft/winget-pkgs`) for native `winget install Patchwork` support.
+- [ ] Expand package manager support beyond Winget (Scoop, Chocolatey).
+- [ ] Group pending updates by package manager.
+
