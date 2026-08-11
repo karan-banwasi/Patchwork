@@ -67,6 +67,8 @@ pw upgrade --all
 
 **Check the tool version:**
 ```powershell
+pw version
+# or
 pw --version
 ```
 
