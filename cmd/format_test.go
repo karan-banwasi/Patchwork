@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"testing"
-	"github.com/karan-banwasi/patchwork/internal/winget"
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 func TestGetPackageColumnWidths(t *testing.T) {
-	updates := []winget.PackageUpdate{
+	updates := []pm.PackageUpdate{
 		{
 			Name:             "Git",
 			Id:               "Git.Git",
@@ -37,7 +37,7 @@ func TestGetPackageColumnWidths(t *testing.T) {
 }
 
 func TestGetDefaultPackageColumnWidths(t *testing.T) {
-	updates := []winget.PackageUpdate{
+	updates := []pm.PackageUpdate{
 		{
 			Name:             "Git",
 			Id:               "Git.Git",
@@ -62,7 +62,7 @@ func TestGetDefaultPackageColumnWidths(t *testing.T) {
 }
 
 func TestFormatUpdateRow(t *testing.T) {
-	pkg := winget.PackageUpdate{
+	pkg := pm.PackageUpdate{
 		Name:             "Git",
 		Id:               "Git.Git",
 		Version:          "2.55.0.2",

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/karan-banwasi/patchwork/internal/winget"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +13,10 @@ var checkCmd = &cobra.Command{
 	Short: "Check for available updates",
 	Long:  `Iterate through supported package managers and check for available updates without installing them.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Checking for available updates using winget...")
+		fmt.Println("Checking for available updates across package managers...")
 
-		updates, err := winget.GetAvailableUpdates(cmd.Context())
+		registry := getDefaultRegistry()
+		updates, err := registry.FetchAllUpdates(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("error checking for updates: %w", err)
 		}

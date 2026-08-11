@@ -9,7 +9,38 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
+
+// WingetManager implements the pm.Manager interface for Windows Package Manager (winget).
+type WingetManager struct{}
+
+// NewWingetManager creates a new instance of WingetManager.
+func NewWingetManager() *WingetManager {
+	return &WingetManager{}
+}
+
+func (w *WingetManager) Name() string {
+	return "winget"
+}
+
+func (w *WingetManager) IsAvailable(ctx context.Context) bool {
+	_, err := wingetPath()
+	return err == nil
+}
+
+func (w *WingetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	return GetAvailableUpdates(ctx)
+}
+
+func (w *WingetManager) UpgradePackage(ctx context.Context, id string) error {
+	return UpgradePackage(ctx, id)
+}
+
+func (w *WingetManager) UpgradeAll(ctx context.Context) error {
+	return UpgradeAll(ctx)
+}
 
 // wingetPath resolves the absolute path to the winget executable
 // in a trusted location to prevent PATH hijacking.
@@ -28,17 +59,8 @@ func wingetPath() (string, error) {
 	return path, nil
 }
 
-// PackageUpdate represents an available update for a package.
-type PackageUpdate struct {
-	Name             string
-	Id               string
-	Version          string
-	AvailableVersion string
-	Source           string
-}
-
 // GetAvailableUpdates runs `winget upgrade` to fetch packages that have updates available.
-func GetAvailableUpdates(ctx context.Context) ([]PackageUpdate, error) {
+func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	exe, err := wingetPath()
 	if err != nil {
 		return nil, err
@@ -58,7 +80,7 @@ func GetAvailableUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	if strings.Contains(outputStr, "No installed package found matching input criteria.") || 
 	   strings.Contains(outputStr, "No applicable update found.") ||
 	   strings.Contains(outputStr, "No packages found") {
-		return []PackageUpdate{}, nil
+		return []pm.PackageUpdate{}, nil
 	}
 
 	updates, parseErr := parseWingetOutput(outputStr)
@@ -82,8 +104,8 @@ func GetAvailableUpdates(ctx context.Context) ([]PackageUpdate, error) {
 
 // parseWingetOutput parses the tabular output from winget.
 // Winget outputs variable-spaced columns, so we find the column offsets from the header.
-func parseWingetOutput(output string) ([]PackageUpdate, error) {
-	var updates []PackageUpdate
+func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
+	var updates []pm.PackageUpdate
 	
 	var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
 	cleanOutput := ansiEscape.ReplaceAllString(output, "")
@@ -175,12 +197,13 @@ func parseWingetOutput(output string) ([]PackageUpdate, error) {
 		// Ignore non-package lines that might get caught at the bottom
 		// Winget package IDs do not contain spaces
 		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") {
-			updates = append(updates, PackageUpdate{
+			updates = append(updates, pm.PackageUpdate{
 				Name:             name,
 				Id:               id,
 				Version:          version,
 				AvailableVersion: available,
 				Source:           source,
+				ManagerName:      "winget",
 			})
 		}
 	}

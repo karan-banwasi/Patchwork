@@ -3,10 +3,19 @@ package cmd
 import (
 	"os"
 
+	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/winget"
 	"github.com/spf13/cobra"
 )
 
 var version = "dev" // overridden by -ldflags
+
+// getDefaultRegistry initializes the default registry of supported package managers.
+func getDefaultRegistry() *pm.Registry {
+	return pm.NewRegistry(
+		winget.NewWingetManager(),
+	)
+}
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{

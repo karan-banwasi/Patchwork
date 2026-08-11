@@ -2,7 +2,17 @@ package winget
 
 import (
 	"testing"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
+
+func TestWingetManager_Name(t *testing.T) {
+	mgr := NewWingetManager()
+	if mgr.Name() != "winget" {
+		t.Errorf("expected manager name 'winget', got %q", mgr.Name())
+	}
+	var _ pm.Manager = mgr // compile-time interface check
+}
 
 func TestParseWingetOutput_Standard(t *testing.T) {
 	sampleOutput := `Name                                      Id                                     Version       Available     Source
@@ -20,7 +30,7 @@ Visual Studio Code                        Microsoft.VisualStudioCode            
 		t.Fatalf("expected 2 updates, got %d", len(updates))
 	}
 
-	if updates[0].Name != "Git" || updates[0].Id != "Git.Git" || updates[0].Version != "2.55.0.2" || updates[0].AvailableVersion != "2.55.0.3" || updates[0].Source != "winget" {
+	if updates[0].Name != "Git" || updates[0].Id != "Git.Git" || updates[0].Version != "2.55.0.2" || updates[0].AvailableVersion != "2.55.0.3" || updates[0].Source != "winget" || updates[0].ManagerName != "winget" {
 		t.Errorf("unexpected package 0 parse: %+v", updates[0])
 	}
 

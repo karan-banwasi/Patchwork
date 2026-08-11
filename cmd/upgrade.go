@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/winget"
 	"github.com/spf13/cobra"
 )
@@ -21,30 +22,49 @@ var upgradeCmd = &cobra.Command{
 			return fmt.Errorf("--all and a package ID are mutually exclusive")
 		}
 
+		registry := getDefaultRegistry()
+
 		if upgradeAll {
-			fmt.Println("Upgrading all available packages...")
-			err := winget.UpgradeAll(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("error upgrading packages: %w", err)
+			fmt.Println("Upgrading all available packages across package managers...")
+			var hadErr bool
+			for _, m := range registry.ActiveManagers(cmd.Context()) {
+				fmt.Printf("\n--- Running upgrade all for %s ---\n", m.Name())
+				err := m.UpgradeAll(cmd.Context())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error upgrading packages for %s: %v\n", m.Name(), err)
+					hadErr = true
+				}
 			}
-			fmt.Println("Successfully upgraded all packages.")
+			if hadErr {
+				return fmt.Errorf("one or more package manager upgrades failed")
+			}
+			fmt.Println("\nSuccessfully completed upgrade for all packages.")
 			return nil
 		}
 
 		if len(args) > 0 {
 			packageId := args[0]
 			fmt.Printf("Upgrading package: %s...\n", packageId)
-			err := winget.UpgradePackage(cmd.Context(), packageId)
-			if err != nil {
-				return fmt.Errorf("error upgrading package %s: %w", packageId, err)
+			var upgraded bool
+			var lastErr error
+			for _, m := range registry.ActiveManagers(cmd.Context()) {
+				err := m.UpgradePackage(cmd.Context(), packageId)
+				if err == nil {
+					upgraded = true
+					fmt.Printf("Successfully upgraded package: %s\n", packageId)
+					break
+				}
+				lastErr = err
 			}
-			fmt.Printf("Successfully upgraded package: %s\n", packageId)
+			if !upgraded {
+				return fmt.Errorf("failed to upgrade package %s: %v", packageId, lastErr)
+			}
 			return nil
 		}
 
 		// Interactive selection mode
 		fmt.Println("Fetching available updates...")
-		updates, err := winget.GetAvailableUpdates(cmd.Context())
+		updates, err := registry.FetchAllUpdates(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("error fetching updates: %w", err)
 		}
@@ -54,17 +74,21 @@ var upgradeCmd = &cobra.Command{
 			return nil
 		}
 
+		managersByName := make(map[string]pm.Manager)
+		for _, m := range registry.ActiveManagers(cmd.Context()) {
+			managersByName[m.Name()] = m
+		}
+
 		// Prepare survey options
 		var options []string
-		// Map option strings back to package IDs
-		optionToID := make(map[string]string)
+		optionToUpdate := make(map[string]pm.PackageUpdate)
 
 		maxNameLen, maxIdLen, maxVersionLen := getDefaultPackageColumnWidths(updates)
 
 		for _, pkg := range updates {
 			label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen)
 			options = append(options, label)
-			optionToID[label] = pkg.Id
+			optionToUpdate[label] = pkg
 		}
 
 		var selectedOptions []string
@@ -86,14 +110,18 @@ var upgradeCmd = &cobra.Command{
 		fmt.Printf("Upgrading %d packages...\n", len(selectedOptions))
 		hadError := false
 		for _, opt := range selectedOptions {
-			id := optionToID[opt]
-			fmt.Printf("\n--- Upgrading: %s ---\n", id)
-			err := winget.UpgradePackage(cmd.Context(), id)
+			pkg := optionToUpdate[opt]
+			fmt.Printf("\n--- Upgrading: %s ---\n", pkg.Id)
+			mgr, exists := managersByName[pkg.ManagerName]
+			if !exists {
+				mgr = winget.NewWingetManager() // fallback
+			}
+			err := mgr.UpgradePackage(cmd.Context(), pkg.Id)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", id, err)
+				fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", pkg.Id, err)
 				hadError = true
 			} else {
-				fmt.Printf("Successfully upgraded %s\n", id)
+				fmt.Printf("Successfully upgraded %s\n", pkg.Id)
 			}
 		}
 		

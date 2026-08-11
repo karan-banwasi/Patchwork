@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/karan-banwasi/patchwork/internal/winget"
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 const (
@@ -12,12 +12,12 @@ const (
 )
 
 // getDefaultPackageColumnWidths calculates padding widths using default minimum column boundaries.
-func getDefaultPackageColumnWidths(updates []winget.PackageUpdate) (int, int, int) {
+func getDefaultPackageColumnWidths(updates []pm.PackageUpdate) (int, int, int) {
 	return getPackageColumnWidths(updates, DefaultMinNameWidth, DefaultMinIDWidth, DefaultMinVersionWidth)
 }
 
 // getPackageColumnWidths calculates the required padding widths for tabular alignment of packages.
-func getPackageColumnWidths(updates []winget.PackageUpdate, minName, minId, minVer int) (int, int, int) {
+func getPackageColumnWidths(updates []pm.PackageUpdate, minName, minId, minVer int) (int, int, int) {
 	var maxNameLen, maxIdLen, maxVersionLen int
 	for _, pkg := range updates {
 		if len(pkg.Name) > maxNameLen {
@@ -39,7 +39,7 @@ func getPackageColumnWidths(updates []winget.PackageUpdate, minName, minId, minV
 }
 
 // formatUpdateRow formats a single package update into a perfectly aligned tabular row string.
-func formatUpdateRow(pkg winget.PackageUpdate, nameLen, idLen, verLen int) string {
+func formatUpdateRow(pkg pm.PackageUpdate, nameLen, idLen, verLen int) string {
 	formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds -> %%s", nameLen, idLen, verLen)
 	return fmt.Sprintf(formatStr, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion)
 }
