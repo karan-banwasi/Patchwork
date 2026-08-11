@@ -39,7 +39,7 @@ try {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -Headers $headers -UseBasicParsing
     Write-Host "Successfully downloaded pw.exe to $installDir" -ForegroundColor Green
 } catch {
-    Write-Error "Failed to download pw.exe. Make sure a valid release with pw.exe has been published on GitHub."
+    Write-Error "Failed to download pw.exe from GitHub ($downloadUrl).`nMake sure a successful build has finished on GitHub Actions and published a release at https://github.com/$repo/releases."
     exit 1
 }
 
