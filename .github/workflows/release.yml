@@ -64,7 +64,7 @@ jobs:
           go generate ./...
           
           # Cross-compile for Windows natively from Ubuntu for maximum speed
-          GOOS=windows GOARCH=amd64 go build -ldflags "-X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
+          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
           
           # Configure Git
           git config user.name "github-actions[bot]"
