@@ -1,46 +1,86 @@
 # Install script for Patchwork (pw)
 $ErrorActionPreference = "Stop"
 
+# Force TLS 1.2 / TLS 1.3 for GitHub compatibility on Windows PowerShell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
 $repo = "karan-banwasi/Patchwork"
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"
 $exePath = Join-Path $installDir "pw.exe"
-# Resolve latest download URL (finds most recent release containing pw.exe)
-$downloadUrl = "https://github.com/$repo/releases/latest/download/pw.exe"
-$releaseTag = ""
-
-$headers = @{ "User-Agent" = "PatchworkInstaller" }
-
-try {
-    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -UseBasicParsing
-    foreach ($rel in $releases) {
-        if ($rel.draft) { continue }
-        $asset = $rel.assets | Where-Object { $_.name -eq "pw.exe" } | Select-Object -First 1
-        if ($asset -and $asset.browser_download_url) {
-            $downloadUrl = $asset.browser_download_url
-            $releaseTag = $rel.tag_name
-            break
-        }
-    }
-} catch {
-    # Fall back to direct latest download URL if GitHub API query fails
-}
-
-Write-Host "Installing Patchwork (pw)..." -ForegroundColor Cyan
 
 # Create target directory if it doesn't exist
 if (-not (Test-Path -Path $installDir)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 }
 
-# Download binary
-$tagMsg = if ($releaseTag) { " $releaseTag" } else { "" }
-Write-Host "Downloading release$tagMsg from GitHub ($downloadUrl)..."
-try {
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -Headers $headers -UseBasicParsing
-    Write-Host "Successfully downloaded pw.exe to $installDir" -ForegroundColor Green
-} catch {
-    Write-Error "Failed to download pw.exe from GitHub ($downloadUrl).`nMake sure a successful build has finished on GitHub Actions and published a release at https://github.com/$repo/releases."
-    exit 1
+Write-Host "Installing Patchwork (pw)..." -ForegroundColor Cyan
+
+# 1. Try downloading via GitHub CLI (supports authenticated private repositories out-of-the-box)
+$downloaded = $false
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+    try {
+        Write-Host "Attempting download via GitHub CLI (authenticated)..." -ForegroundColor Cyan
+        & gh release download -R $repo -p "pw.exe" -O $exePath --clobber 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $exePath)) {
+            Write-Host "Successfully downloaded pw.exe via GitHub CLI" -ForegroundColor Green
+            $downloaded = $true
+        }
+    } catch {
+        # Fall through to REST API download
+    }
+}
+
+# 2. Try REST download (supports public repos & token-authenticated private repos)
+if (-not $downloaded) {
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
+    $headers = @{ "User-Agent" = "PatchworkInstaller" }
+    if ($token) {
+        $headers["Authorization"] = "Bearer $token"
+    }
+
+    $downloadUrl = "https://github.com/$repo/releases/latest/download/pw.exe"
+    $assetApiUrl = ""
+    $releaseTag = ""
+
+    try {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -UseBasicParsing
+        foreach ($rel in $releases) {
+            if ($rel.draft) { continue }
+            $asset = $rel.assets | Where-Object { $_.name -eq "pw.exe" } | Select-Object -First 1
+            if ($asset) {
+                $downloadUrl = $asset.browser_download_url
+                $assetApiUrl = $asset.url
+                $releaseTag = $rel.tag_name
+                break
+            }
+        }
+    } catch {
+        # Fall back to direct latest download URL
+    }
+
+    $tagMsg = if ($releaseTag) { " $releaseTag" } else { "" }
+    Write-Host "Downloading release$tagMsg from GitHub..."
+
+    try {
+        if ($token -and $assetApiUrl) {
+            # Private repository asset download via GitHub REST API
+            $apiHeaders = @{
+                "User-Agent"    = "PatchworkInstaller"
+                "Authorization" = "Bearer $token"
+                "Accept"        = "application/octet-stream"
+            }
+            Invoke-WebRequest -Uri $assetApiUrl -OutFile $exePath -Headers $apiHeaders -UseBasicParsing
+        } else {
+            # Public repository download
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -Headers $headers -UseBasicParsing
+        }
+        Write-Host "Successfully downloaded pw.exe to $installDir" -ForegroundColor Green
+        $downloaded = $true
+    } catch {
+        $exMsg = $_.Exception.Message
+        Write-Error "Failed to download pw.exe ($exMsg).`nFor private repositories, ensure 'gh' CLI is logged in (gh auth login) or GH_TOKEN is set in your environment."
+        exit 1
+    }
 }
 
 # Update User PATH if needed
