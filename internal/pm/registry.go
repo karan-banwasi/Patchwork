@@ -22,6 +22,16 @@ func (r *Registry) Register(m Manager) {
 	r.managers = append(r.managers, m)
 }
 
+// GetManager returns a registered package manager by its name.
+func (r *Registry) GetManager(name string) (Manager, bool) {
+	for _, m := range r.managers {
+		if m.Name() == name {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
 // ActiveManagers returns all registered package managers that are available on the system.
 func (r *Registry) ActiveManagers(ctx context.Context) []Manager {
 	var active []Manager
@@ -33,18 +43,41 @@ func (r *Registry) ActiveManagers(ctx context.Context) []Manager {
 	return active
 }
 
-// FetchAllUpdates queries all active package managers for available updates.
+// FetchAllUpdates queries all active package managers concurrently for available updates.
 func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error) {
+	active := r.ActiveManagers(ctx)
+	if len(active) == 0 {
+		return nil, nil
+	}
+
+	type fetchResult struct {
+		updates []PackageUpdate
+		err     error
+	}
+
+	ch := make(chan fetchResult, len(active))
+
+	for _, m := range active {
+		go func(mgr Manager) {
+			updates, err := mgr.GetAvailableUpdates(ctx)
+			if err != nil {
+				ch <- fetchResult{err: fmt.Errorf("[%s] error fetching updates: %w", mgr.Name(), err)}
+				return
+			}
+			ch <- fetchResult{updates: updates}
+		}(m)
+	}
+
 	var allUpdates []PackageUpdate
 	var errs []error
 
-	for _, m := range r.ActiveManagers(ctx) {
-		updates, err := m.GetAvailableUpdates(ctx)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("[%s] error fetching updates: %w", m.Name(), err))
-			continue
+	for i := 0; i < len(active); i++ {
+		res := <-ch
+		if res.err != nil {
+			errs = append(errs, res.err)
+		} else {
+			allUpdates = append(allUpdates, res.updates...)
 		}
-		allUpdates = append(allUpdates, updates...)
 	}
 
 	if len(errs) > 0 && len(allUpdates) == 0 {
@@ -53,3 +86,4 @@ func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error)
 
 	return allUpdates, nil
 }
+

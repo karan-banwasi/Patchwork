@@ -6,7 +6,6 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/karan-banwasi/patchwork/internal/pm"
-	"github.com/karan-banwasi/patchwork/internal/winget"
 	"github.com/spf13/cobra"
 )
 
@@ -74,11 +73,6 @@ var upgradeCmd = &cobra.Command{
 			return nil
 		}
 
-		managersByName := make(map[string]pm.Manager)
-		for _, m := range registry.ActiveManagers(cmd.Context()) {
-			managersByName[m.Name()] = m
-		}
-
 		// Prepare survey options
 		var options []string
 		optionToUpdate := make(map[string]pm.PackageUpdate)
@@ -112,9 +106,11 @@ var upgradeCmd = &cobra.Command{
 		for _, opt := range selectedOptions {
 			pkg := optionToUpdate[opt]
 			fmt.Printf("\n--- Upgrading: %s ---\n", pkg.Id)
-			mgr, exists := managersByName[pkg.ManagerName]
+			mgr, exists := registry.GetManager(pkg.ManagerName)
 			if !exists {
-				mgr = winget.NewWingetManager() // fallback
+				fmt.Fprintf(os.Stderr, "Error: package manager %q not registered for package %s\n", pkg.ManagerName, pkg.Id)
+				hadError = true
+				continue
 			}
 			err := mgr.UpgradePackage(cmd.Context(), pkg.Id)
 			if err != nil {

@@ -8,19 +8,23 @@ $repo = "karan-banwasi/Patchwork"
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"
 $exePath = Join-Path $installDir "pw.exe"
 
+# Detect System Architecture (amd64 vs arm64)
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "arm64" } else { "amd64" }
+$assetName = if ($arch -eq "arm64") { "pw-arm64.exe" } else { "pw.exe" }
+
 # Create target directory if it doesn't exist
 if (-not (Test-Path -Path $installDir)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 }
 
-Write-Host "Installing Patchwork (pw)..." -ForegroundColor Cyan
+Write-Host "Installing Patchwork (pw) for $arch..." -ForegroundColor Cyan
 
 # 1. Try downloading via GitHub CLI (supports authenticated private repositories out-of-the-box)
 $downloaded = $false
 if (Get-Command gh -ErrorAction SilentlyContinue) {
     try {
         Write-Host "Attempting download via GitHub CLI (authenticated)..." -ForegroundColor Cyan
-        & gh release download -R $repo -p "pw.exe" -O $exePath --clobber 2>$null
+        & gh release download -R $repo -p $assetName -O $exePath --clobber 2>$null
         if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $exePath)) {
             Write-Host "Successfully downloaded pw.exe via GitHub CLI" -ForegroundColor Green
             $downloaded = $true
@@ -38,7 +42,7 @@ if (-not $downloaded) {
         $headers["Authorization"] = "Bearer $token"
     }
 
-    $downloadUrl = "https://github.com/$repo/releases/latest/download/pw.exe"
+    $downloadUrl = "https://github.com/$repo/releases/latest/download/$assetName"
     $assetApiUrl = ""
     $releaseTag = ""
 
@@ -46,7 +50,7 @@ if (-not $downloaded) {
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -UseBasicParsing
         foreach ($rel in $releases) {
             if ($rel.draft) { continue }
-            $asset = $rel.assets | Where-Object { $_.name -eq "pw.exe" } | Select-Object -First 1
+            $asset = $rel.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
             if ($asset) {
                 $downloadUrl = $asset.browser_download_url
                 $assetApiUrl = $asset.url
@@ -91,6 +95,26 @@ if (($cleanUserPath -split ';') -notcontains $installDir) {
     $newUserPath = if ([string]::IsNullOrWhitespace($cleanUserPath)) { $installDir } else { "$cleanUserPath;$installDir" }
     [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
     $env:PATH = if ([string]::IsNullOrWhitespace($env:PATH)) { $installDir } else { "$($env:PATH.TrimEnd(';'));$installDir" }
+    
+    # Broadcast WM_SETTINGCHANGE so running terminal windows update environment without restarting
+    try {
+        if (-not ('Win32.NativeMethods' -as [type])) {
+            Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
+                [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+                public static extern IntPtr SendMessageTimeout(
+                    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,
+                    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+"@
+        }
+        $HWND_BROADCAST = [IntPtr]0xffff
+        $WM_SETTINGCHANGE = 0x001A
+        $SMTO_ABORTIFHUNG = 0x0002
+        $result = [UIntPtr]::Zero
+        [Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null
+    } catch {
+        # Ignore notification failures if P/Invoke is restricted
+    }
+    
     Write-Host "PATH updated successfully." -ForegroundColor Green
 }
 

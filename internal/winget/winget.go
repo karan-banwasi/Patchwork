@@ -102,12 +102,51 @@ func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	return updates, nil
 }
 
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+
+// indexRunes returns the rune index of sub within runes, or -1 if not found.
+func indexRunes(runes []rune, sub string) int {
+	subRunes := []rune(sub)
+	if len(subRunes) == 0 {
+		return 0
+	}
+	for i := 0; i <= len(runes)-len(subRunes); i++ {
+		match := true
+		for j := 0; j < len(subRunes); j++ {
+			if runes[i+j] != subRunes[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// findWordStartIndices returns the starting rune indices of words in runes.
+func findWordStartIndices(runes []rune) []int {
+	var indices []int
+	inWord := false
+	for i, r := range runes {
+		if r != ' ' && r != '\t' && r != '\r' {
+			if !inWord {
+				inWord = true
+				indices = append(indices, i)
+			}
+		} else {
+			inWord = false
+		}
+	}
+	return indices
+}
+
 // parseWingetOutput parses the tabular output from winget.
 // Winget outputs variable-spaced columns, so we find the column offsets from the header.
 func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	var updates []pm.PackageUpdate
 	
-	var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
 	cleanOutput := ansiEscape.ReplaceAllString(output, "")
 	
 	lines := strings.Split(cleanOutput, "\n")
@@ -120,20 +159,42 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 		}
 	}
 
+	// Fallback for localized Winget output: look for the table separator line of dashes
+	if headerLineIdx == -1 {
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "---") && strings.Count(trimmed, "-") > 10 {
+				if i > 0 {
+					headerLineIdx = i - 1
+					break
+				}
+			}
+		}
+	}
+
 	if headerLineIdx == -1 || headerLineIdx+1 >= len(lines) {
 		return updates, nil
 	}
 
-	headerLine := lines[headerLineIdx]
+	headerRunes := []rune(lines[headerLineIdx])
 	
-	nameIdx := strings.Index(headerLine, "Name")
-	idIdx := strings.Index(headerLine, "Id")
-	versionIdx := strings.Index(headerLine, "Version")
-	availableIdx := strings.Index(headerLine, "Available")
-	sourceIdx := strings.Index(headerLine, "Source")
+	nameIdx := indexRunes(headerRunes, "Name")
+	idIdx := indexRunes(headerRunes, "Id")
+	versionIdx := indexRunes(headerRunes, "Version")
+	availableIdx := indexRunes(headerRunes, "Available")
+	sourceIdx := indexRunes(headerRunes, "Source")
 
 	if nameIdx == -1 || idIdx == -1 || versionIdx == -1 || availableIdx == -1 || sourceIdx == -1 {
-		return updates, nil // Could not parse headers
+		// Use word boundary offsets for localized headers
+		wordIndices := findWordStartIndices(headerRunes)
+		if len(wordIndices) < 5 {
+			return updates, nil // Could not parse localized headers
+		}
+		nameIdx = wordIndices[0]
+		idIdx = wordIndices[1]
+		versionIdx = wordIndices[2]
+		availableIdx = wordIndices[3]
+		sourceIdx = wordIndices[4]
 	}
 	
 	// Validate that columns are in the expected order

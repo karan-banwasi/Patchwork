@@ -70,7 +70,7 @@ func TestFormatUpdateRow(t *testing.T) {
 	}
 
 	formatted := formatUpdateRow(pkg, 10, 10, 8)
-	expected := "Git          Git.Git      2.55.0.2 -> 2.55.0.3"
+	expected := "Git          Git.Git      2.55.0.2    2.55.0.3"
 
 	if formatted != expected {
 		t.Errorf("expected %q, got %q", expected, formatted)

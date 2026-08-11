@@ -100,3 +100,44 @@ func TestParseWingetOutput_LeadingSpacesHeader(t *testing.T) {
 		t.Errorf("unexpected package parse result: %+v", updates[0])
 	}
 }
+
+func TestParseWingetOutput_UTF8(t *testing.T) {
+	sampleOutput := "Name                                      Id                                     Version       Available     Source\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"7-Zip® Archiver                            7zip.7zip                              23.01         24.05         winget\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	if updates[0].Name != "7-Zip® Archiver" || updates[0].Id != "7zip.7zip" || updates[0].Version != "23.01" || updates[0].AvailableVersion != "24.05" {
+		t.Errorf("unexpected package parse result: %+v", updates[0])
+	}
+}
+
+func TestParseWingetOutput_LocalizedHeader(t *testing.T) {
+	// Sample German winget output
+	sampleOutput := "Name                                      ID                                     Version       Verfügbar     Quelle\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"VLC media player                          VideoLAN.VLC                           3.0.18        3.0.20        winget\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	if updates[0].Name != "VLC media player" || updates[0].Id != "VideoLAN.VLC" || updates[0].Version != "3.0.18" || updates[0].AvailableVersion != "3.0.20" {
+		t.Errorf("unexpected package parse result: %+v", updates[0])
+	}
+}
+
+

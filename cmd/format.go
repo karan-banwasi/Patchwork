@@ -40,6 +40,7 @@ func getPackageColumnWidths(updates []pm.PackageUpdate, minName, minId, minVer i
 
 // formatUpdateRow formats a single package update into a perfectly aligned tabular row string.
 func formatUpdateRow(pkg pm.PackageUpdate, nameLen, idLen, verLen int) string {
-	formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds -> %%s", nameLen, idLen, verLen)
+	formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds    %%s", nameLen, idLen, verLen)
 	return fmt.Sprintf(formatStr, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion)
 }
+

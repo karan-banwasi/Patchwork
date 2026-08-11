@@ -64,8 +64,26 @@ func TestRegistry_FetchAllUpdates(t *testing.T) {
 	if len(updates) != 2 {
 		t.Fatalf("expected 2 updates, got %d", len(updates))
 	}
-	if updates[0].Id != "Git.Git" || updates[1].Id != "nodejs" {
+	ids := map[string]bool{updates[0].Id: true, updates[1].Id: true}
+	if !ids["Git.Git"] || !ids["nodejs"] {
 		t.Errorf("unexpected updates list: %+v", updates)
+	}
+}
+
+func TestRegistry_GetManager(t *testing.T) {
+	m1 := &mockManager{name: "winget", available: true}
+	m2 := &mockManager{name: "scoop", available: true}
+
+	reg := NewRegistry(m1, m2)
+
+	mgr, found := reg.GetManager("winget")
+	if !found || mgr.Name() != "winget" {
+		t.Errorf("expected to find winget manager, got found=%v, mgr=%v", found, mgr)
+	}
+
+	_, foundMissing := reg.GetManager("unknown")
+	if foundMissing {
+		t.Errorf("expected found=false for unknown manager")
 	}
 }
 
@@ -82,3 +100,4 @@ func TestRegistry_FetchAllUpdates_Error(t *testing.T) {
 		t.Fatalf("expected error when all managers fail, got nil")
 	}
 }
+

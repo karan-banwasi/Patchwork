@@ -68,8 +68,9 @@ jobs:
           echo "Previous tag: $LATEST_TAG"
           echo "New tag: $NEW_TAG"
           
-          # Cross-compile for Windows natively from Ubuntu for maximum speed
+          # Cross-compile for Windows natively (amd64 and arm64) from Ubuntu
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
+          GOOS=windows GOARCH=arm64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-arm64.exe main.go
           
-          # Create a GitHub Release with the compiled Windows binary attached
-          gh release create "$NEW_TAG" pw.exe --title "Release $NEW_TAG" --generate-notes
+          # Create a GitHub Release with the compiled Windows binaries attached
+          gh release create "$NEW_TAG" pw.exe pw-arm64.exe --title "Release $NEW_TAG" --generate-notes
