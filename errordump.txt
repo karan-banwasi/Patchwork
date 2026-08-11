@@ -1,0 +1,198 @@
+
+pw upgrade                                                                                                                                                                                     pwsh  12:58:37 
+Fetching available updates...
+? Select packages to upgrade (Space to select, Enter to submit, submit empty to cancel): chocolatey                   chocolatey                   2.6.0         2.7.3         choco, python                       python                       3.14.3        3.14.7        choco
+Upgrading 2 packages...
+
+--- Upgrading: chocolatey ---
+Chocolatey v2.6.0                                                                                                                                                                                                                                                                          
+Chocolatey detected you are not running from an elevated command shell                                                                                                                                                                                                                     
+ (cmd/powershell).                                                                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                           
+ You may experience errors - many functions/packages                                                                                                                                                                                                                                       
+ require admin rights. Only advanced users should run choco w/out an
+ elevated shell. When you open the command shell, you should ensure
+ that you do so with "Run as Administrator" selected. If you are
+ attempting to use Chocolatey in a non-administrator setting, you
+ must select a different location other than the default install
+ location. See
+ https://docs.chocolatey.org/en-us/choco/setup#non-administrative-install
+ for details.
+
+For the question below, you have 20 seconds to make a selection.
+
+ Do you want to continue?([Y]es/[N]o): 
+Timeout or your choice of '' is not a valid selection.
+Upgrading the following packages:
+chocolatey
+By upgrading, you accept licenses for the packages.
+
+You have chocolatey v2.6.0 installed. Version 2.7.3 is available based on your source(s).
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib-bkp\chocolatey' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib-bkp\chocolatey' is denied.
+Maximum tries of 3 reached. Throwing error.
+Cannot create directory "C:\ProgramData\chocolatey\lib-bkp\chocolatey". Error was:
+System.UnauthorizedAccessException: Access to the path 'C:\ProgramData\chocolatey\lib-bkp\chocolatey' is denied.
+   at System.IO.__Error.WinIOError(Int32 errorCode, String maybeFullPath)
+   at System.IO.Directory.InternalCreateDirectory(String fullPath, String path, Object dirSecurityObj, Boolean checkHost)
+   at System.IO.Directory.InternalCreateDirectoryHelper(String path, Boolean checkHost)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.<>c__DisplayClass63_0.<CreateDirectory>b__1()
+   at chocolatey.infrastructure.tolerance.FaultTolerance.<>c__DisplayClass1_0.<Retry>b__0()
+   at chocolatey.infrastructure.tolerance.FaultTolerance.Retry[T](Int32 numberOfTries, Func`1 function, Int32 waitDurationMilliseconds, Int32 increaseRetryByMilliseconds, Boolean isSilent)
+   at chocolatey.infrastructure.tolerance.FaultTolerance.Retry(Int32 numberOfTries, Action action, Int32 waitDurationMilliseconds, Int32 increaseRetryByMilliseconds, Boolean isSilent)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.CreateDirectory(String directoryPath, Boolean isSilent)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.EnsureDirectoryExists(String directoryPath, Boolean ignoreError, Boolean isSilent)
+Failed to run backup or beforeModify steps for package 'chocolatey': Access to the path 'C:\ProgramData\chocolatey\lib-bkp\chocolatey' is denied.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\chocolatey.nupkg' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\chocolatey.nupkg' is denied.
+Maximum tries of 3 reached. Throwing error.
+Error deleting nupkg file:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\chocolatey.nupkg' is denied.
+chocolatey not upgraded. An error occurred during installation:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\chocolatey.nupkg' is denied.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\.chocolateyPending' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\.chocolateyPending' is denied.
+Maximum tries of 3 reached. Throwing error.
+
+Chocolatey upgraded 0/0 packages.
+ See the log for details (C:\ProgramData\chocolatey\logs\chocolatey.log).
+Access to the path 'C:\ProgramData\chocolatey\lib\chocolatey\.chocolateyPending' is denied.
+Error upgrading chocolatey: choco upgrade failed: exit status 1
+
+--- Upgrading: python ---
+Chocolatey v2.6.0
+Chocolatey detected you are not running from an elevated command shell
+ (cmd/powershell).
+
+ You may experience errors - many functions/packages
+ require admin rights. Only advanced users should run choco w/out an
+ elevated shell. When you open the command shell, you should ensure
+ that you do so with "Run as Administrator" selected. If you are
+ attempting to use Chocolatey in a non-administrator setting, you
+ must select a different location other than the default install
+ location. See
+ https://docs.chocolatey.org/en-us/choco/setup#non-administrative-install
+ for details.
+
+For the question below, you have 20 seconds to make a selection.
+
+ Do you want to continue?([Y]es/[N]o):
+Timeout or your choice of '' is not a valid selection.
+Upgrading the following packages:
+python
+By upgrading, you accept licenses for the packages.
+
+You have python v3.14.3 installed. Version 3.14.7 is available based on your source(s).
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib-bkp\python314' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib-bkp\python314' is denied.
+Maximum tries of 3 reached. Throwing error.
+Cannot create directory "C:\ProgramData\chocolatey\lib-bkp\python314". Error was:
+System.UnauthorizedAccessException: Access to the path 'C:\ProgramData\chocolatey\lib-bkp\python314' is denied.
+   at System.IO.__Error.WinIOError(Int32 errorCode, String maybeFullPath)
+   at System.IO.Directory.InternalCreateDirectory(String fullPath, String path, Object dirSecurityObj, Boolean checkHost)
+   at System.IO.Directory.InternalCreateDirectoryHelper(String path, Boolean checkHost)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.<>c__DisplayClass63_0.<CreateDirectory>b__1()
+   at chocolatey.infrastructure.tolerance.FaultTolerance.<>c__DisplayClass1_0.<Retry>b__0()
+   at chocolatey.infrastructure.tolerance.FaultTolerance.Retry[T](Int32 numberOfTries, Func`1 function, Int32 waitDurationMilliseconds, Int32 increaseRetryByMilliseconds, Boolean isSilent)
+   at chocolatey.infrastructure.tolerance.FaultTolerance.Retry(Int32 numberOfTries, Action action, Int32 waitDurationMilliseconds, Int32 increaseRetryByMilliseconds, Boolean isSilent)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.CreateDirectory(String directoryPath, Boolean isSilent)
+   at chocolatey.infrastructure.filesystem.DotNetFileSystem.EnsureDirectoryExists(String directoryPath, Boolean ignoreError, Boolean isSilent)
+Failed to run backup or beforeModify steps for package 'python314': Access to the path 'C:\ProgramData\chocolatey\lib-bkp\python314' is denied.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\python314.nupkg' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\python314.nupkg' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\python314.nuspec' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\python314.nuspec' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\legal\LICENSE.txt' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\legal\LICENSE.txt' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\legal\VERIFICATION.txt' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\legal\VERIFICATION.txt' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\chocolateyInstall.ps1' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\chocolateyInstall.ps1' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\chocolateyUninstall.ps1' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\chocolateyUninstall.ps1' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\helpers.ps1' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\helpers.ps1' is denied.
+Maximum tries of 3 reached. Throwing error.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\python-3.14.3-amd64.exe.ignore' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\tools\python-3.14.3-amd64.exe.ignore' is denied.
+Maximum tries of 3 reached. Throwing error.
+Unable to remove existing package prior to upgrade:
+ One or more errors occurred.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+Maximum tries of 3 reached. Throwing error.
+python not upgraded. An error occurred during installation:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+This is try 1/3. Retrying after 300 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+This is try 2/3. Retrying after 400 milliseconds.
+ Error converted to warning:
+ Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+Maximum tries of 3 reached. Throwing error.
+
+Chocolatey upgraded 0/0 packages.
+ See the log for details (C:\ProgramData\chocolatey\logs\chocolatey.log).
+Access to the path 'C:\ProgramData\chocolatey\lib\python314\.chocolateyPending' is denied.
+Error upgrading python: choco upgrade failed: exit status 1
+
+All selected upgrades have completed.
+Error: one or more package upgrades failed

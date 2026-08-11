@@ -12,9 +12,20 @@ $exePath = Join-Path $installDir "pw.exe"
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "arm64" } else { "amd64" }
 $assetName = if ($arch -eq "arm64") { "pw-arm64.exe" } else { "pw.exe" }
 
-# Create target directory if it doesn't exist
+# Clean up local Go dev binary if present to avoid PATH shadow conflicts
+$goBinExe = Join-Path $env:USERPROFILE "go\bin\pw.exe"
+if (Test-Path -Path $goBinExe) {
+    Write-Host "Notice: Cleaning up local dev binary at $goBinExe..." -ForegroundColor Yellow
+    Remove-Item -Path $goBinExe -Force -ErrorAction SilentlyContinue
+}
+
+# Create target directory if it doesn't exist, or clean previous binary
 if (-not (Test-Path -Path $installDir)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+} else {
+    if (Test-Path -Path $exePath) {
+        Remove-Item -Path $exePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "Installing Patchwork (pw) for $arch..." -ForegroundColor Cyan
