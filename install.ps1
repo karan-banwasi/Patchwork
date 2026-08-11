@@ -130,4 +130,13 @@ if (($cleanUserPath -split ';') -notcontains $installDir) {
 }
 
 Write-Host "`nPatchwork has been installed successfully!" -ForegroundColor Green
+
+if (Test-Path -Path $exePath) {
+    try {
+        & $exePath version
+    } catch {
+        # Fallback if execution is restricted
+    }
+}
+
 Write-Host "Run 'pw --help' or 'pw check' in a new terminal window to get started." -ForegroundColor Cyan
