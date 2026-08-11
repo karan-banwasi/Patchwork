@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/winget"
@@ -14,23 +13,22 @@ var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for available updates",
 	Long:  `Iterate through supported package managers and check for available updates without installing them.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Checking for available updates using winget...")
 
-		updates, err := winget.GetAvailableUpdates()
+		updates, err := winget.GetAvailableUpdates(cmd.Context())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking for updates: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("error checking for updates: %w", err)
 		}
 
 		if len(updates) == 0 {
 			fmt.Println("All packages are up to date.")
-			return
+			return nil
 		}
 
 		fmt.Printf("Found %d packages with available updates:\n\n", len(updates))
 		
-		maxNameLen, maxIdLen, maxVersionLen := getPackageColumnWidths(updates, 4, 2, 7)
+		maxNameLen, maxIdLen, maxVersionLen := getDefaultPackageColumnWidths(updates)
 
 		headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds    %%s\n", maxNameLen, maxIdLen, maxVersionLen)
 		
@@ -40,6 +38,7 @@ var checkCmd = &cobra.Command{
 		for _, pkg := range updates {
 			fmt.Printf("  %s\n", formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen))
 		}
+		return nil
 	},
 }
 

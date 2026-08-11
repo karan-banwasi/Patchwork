@@ -36,6 +36,31 @@ func TestGetPackageColumnWidths(t *testing.T) {
 	}
 }
 
+func TestGetDefaultPackageColumnWidths(t *testing.T) {
+	updates := []winget.PackageUpdate{
+		{
+			Name:             "Git",
+			Id:               "Git.Git",
+			Version:          "2.5",
+			AvailableVersion: "2.6",
+		},
+	}
+
+	nameLen, idLen, verLen := getDefaultPackageColumnWidths(updates)
+
+	if nameLen != DefaultMinNameWidth {
+		t.Errorf("expected nameLen=%d, got %d", DefaultMinNameWidth, nameLen)
+	}
+
+	if idLen != DefaultMinIDWidth {
+		t.Errorf("expected idLen=%d, got %d", DefaultMinIDWidth, idLen)
+	}
+
+	if verLen != DefaultMinVersionWidth {
+		t.Errorf("expected verLen=%d, got %d", DefaultMinVersionWidth, verLen)
+	}
+}
+
 func TestFormatUpdateRow(t *testing.T) {
 	pkg := winget.PackageUpdate{
 		Name:             "Git",

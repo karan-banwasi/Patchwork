@@ -10,10 +10,11 @@ var version = "dev" // overridden by -ldflags
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:     "pw",
-	Version: version,
-	Short:   "Patchwork is a CLI tool to manage package updates",
-	Long:    `Patchwork iterates through packages that have available updates and helps manage them across different package managers like winget.`,
+	Use:          "pw",
+	Version:      version,
+	Short:        "Patchwork is a CLI tool to manage package updates",
+	Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers like winget.`,
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

@@ -5,6 +5,17 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/winget"
 )
 
+const (
+	DefaultMinNameWidth    = 10
+	DefaultMinIDWidth      = 10
+	DefaultMinVersionWidth = 7
+)
+
+// getDefaultPackageColumnWidths calculates padding widths using default minimum column boundaries.
+func getDefaultPackageColumnWidths(updates []winget.PackageUpdate) (int, int, int) {
+	return getPackageColumnWidths(updates, DefaultMinNameWidth, DefaultMinIDWidth, DefaultMinVersionWidth)
+}
+
 // getPackageColumnWidths calculates the required padding widths for tabular alignment of packages.
 func getPackageColumnWidths(updates []winget.PackageUpdate, minName, minId, minVer int) (int, int, int) {
 	var maxNameLen, maxIdLen, maxVersionLen int

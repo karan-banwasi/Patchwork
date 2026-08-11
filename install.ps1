@@ -25,11 +25,12 @@ try {
 
 # Update User PATH if needed
 $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
-if ($userPath -split ';' -notcontains $installDir) {
+$cleanUserPath = if ($userPath) { $userPath.TrimEnd(';') } else { "" }
+if (($cleanUserPath -split ';') -notcontains $installDir) {
     Write-Host "Adding $installDir to User PATH..." -ForegroundColor Yellow
-    $newUserPath = if ([string]::IsNullOrWhitespace($userPath)) { $installDir } else { "$userPath;$installDir" }
+    $newUserPath = if ([string]::IsNullOrWhitespace($cleanUserPath)) { $installDir } else { "$cleanUserPath;$installDir" }
     [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
-    $env:PATH = "$env:PATH;$installDir"
+    $env:PATH = if ([string]::IsNullOrWhitespace($env:PATH)) { $installDir } else { "$($env:PATH.TrimEnd(';'));$installDir" }
     Write-Host "PATH updated successfully." -ForegroundColor Green
 }
 

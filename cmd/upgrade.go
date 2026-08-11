@@ -16,46 +16,42 @@ var upgradeCmd = &cobra.Command{
 	Use:   "upgrade [package-id]",
 	Short: "Upgrade available packages",
 	Long:  `Upgrade a specific package by providing its ID, or upgrade all packages using the --all flag.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if upgradeAll && len(args) > 0 {
-			fmt.Fprintln(os.Stderr, "Error: --all and a package ID are mutually exclusive.")
-			os.Exit(1)
+			return fmt.Errorf("--all and a package ID are mutually exclusive")
 		}
 
 		if upgradeAll {
 			fmt.Println("Upgrading all available packages...")
-			err := winget.UpgradeAll()
+			err := winget.UpgradeAll(cmd.Context())
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upgrading packages: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("error upgrading packages: %w", err)
 			}
 			fmt.Println("Successfully upgraded all packages.")
-			return
+			return nil
 		}
 
 		if len(args) > 0 {
 			packageId := args[0]
 			fmt.Printf("Upgrading package: %s...\n", packageId)
-			err := winget.UpgradePackage(packageId)
+			err := winget.UpgradePackage(cmd.Context(), packageId)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upgrading package %s: %v\n", packageId, err)
-				os.Exit(1)
+				return fmt.Errorf("error upgrading package %s: %w", packageId, err)
 			}
 			fmt.Printf("Successfully upgraded package: %s\n", packageId)
-			return
+			return nil
 		}
 
 		// Interactive selection mode
 		fmt.Println("Fetching available updates...")
-		updates, err := winget.GetAvailableUpdates()
+		updates, err := winget.GetAvailableUpdates(cmd.Context())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error fetching updates: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("error fetching updates: %w", err)
 		}
 
 		if len(updates) == 0 {
 			fmt.Println("No updates available.")
-			return
+			return nil
 		}
 
 		// Prepare survey options
@@ -63,7 +59,7 @@ var upgradeCmd = &cobra.Command{
 		// Map option strings back to package IDs
 		optionToID := make(map[string]string)
 
-		maxNameLen, maxIdLen, maxVersionLen := getPackageColumnWidths(updates, 10, 10, 5)
+		maxNameLen, maxIdLen, maxVersionLen := getDefaultPackageColumnWidths(updates)
 
 		for _, pkg := range updates {
 			label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen)
@@ -79,12 +75,12 @@ var upgradeCmd = &cobra.Command{
 		err = survey.AskOne(prompt, &selectedOptions)
 		if err != nil {
 			fmt.Println("Selection canceled or failed.")
-			return
+			return nil
 		}
 
 		if len(selectedOptions) == 0 {
 			fmt.Println("No packages selected. Canceled.")
-			return
+			return nil
 		}
 
 		fmt.Printf("Upgrading %d packages...\n", len(selectedOptions))
@@ -92,7 +88,7 @@ var upgradeCmd = &cobra.Command{
 		for _, opt := range selectedOptions {
 			id := optionToID[opt]
 			fmt.Printf("\n--- Upgrading: %s ---\n", id)
-			err := winget.UpgradePackage(id)
+			err := winget.UpgradePackage(cmd.Context(), id)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", id, err)
 				hadError = true
@@ -103,8 +99,9 @@ var upgradeCmd = &cobra.Command{
 		
 		fmt.Println("\nAll selected upgrades have completed.")
 		if hadError {
-			os.Exit(1)
+			return fmt.Errorf("one or more package upgrades failed")
 		}
+		return nil
 	},
 }
 

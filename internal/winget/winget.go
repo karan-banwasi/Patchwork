@@ -2,6 +2,7 @@ package winget
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,20 +38,21 @@ type PackageUpdate struct {
 }
 
 // GetAvailableUpdates runs `winget upgrade` to fetch packages that have updates available.
-func GetAvailableUpdates() ([]PackageUpdate, error) {
+func GetAvailableUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	exe, err := wingetPath()
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(exe, "upgrade")
+	cmd := exec.CommandContext(ctx, exe, "upgrade")
 	
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	// We deliberately ignore stderr to prevent warnings from corrupting the table output
+	cmd.Stderr = &stderr
 	
 	// Winget might return non-zero exit code if no updates are found or due to warnings
 	err = cmd.Run()
 	outputStr := stdout.String()
+	stderrStr := strings.TrimSpace(stderr.String())
 
 	// A very basic check to see if no updates were found
 	if strings.Contains(outputStr, "No installed package found matching input criteria.") || 
@@ -66,7 +68,13 @@ func GetAvailableUpdates() ([]PackageUpdate, error) {
 
 	// If winget failed and we couldn't parse any updates, propagate the error.
 	if err != nil && len(updates) == 0 {
-		return nil, fmt.Errorf("winget execution failed: %w (output: %s)", err, strings.TrimSpace(outputStr))
+		errMsg := fmt.Sprintf("winget execution failed: %v", err)
+		if stderrStr != "" {
+			errMsg += fmt.Sprintf(" (stderr: %s)", stderrStr)
+		} else if strings.TrimSpace(outputStr) != "" {
+			errMsg += fmt.Sprintf(" (stdout: %s)", strings.TrimSpace(outputStr))
+		}
+		return nil, fmt.Errorf("%s", errMsg)
 	}
 
 	return updates, nil
@@ -96,25 +104,28 @@ func parseWingetOutput(output string) ([]PackageUpdate, error) {
 
 	headerLine := lines[headerLineIdx]
 	
-	// Winget sometimes outputs its progress spinner on the same line as the headers!
-	// We need to slice off anything before the actual 'Name' column starts.
 	nameIdx := strings.Index(headerLine, "Name")
-	if nameIdx != -1 {
-		headerLine = headerLine[nameIdx:]
-	}
-
 	idIdx := strings.Index(headerLine, "Id")
 	versionIdx := strings.Index(headerLine, "Version")
 	availableIdx := strings.Index(headerLine, "Available")
 	sourceIdx := strings.Index(headerLine, "Source")
 
-	if idIdx == -1 || versionIdx == -1 || availableIdx == -1 || sourceIdx == -1 {
+	if nameIdx == -1 || idIdx == -1 || versionIdx == -1 || availableIdx == -1 || sourceIdx == -1 {
 		return updates, nil // Could not parse headers
 	}
 	
 	// Validate that columns are in the expected order
-	if !(idIdx > 0 && versionIdx > idIdx && availableIdx > versionIdx && sourceIdx > availableIdx) {
+	if !(nameIdx >= 0 && idIdx > nameIdx && versionIdx > idIdx && availableIdx > versionIdx && sourceIdx > availableIdx) {
 		return nil, fmt.Errorf("winget header columns are in an unexpected order")
+	}
+
+	// Winget sometimes outputs its progress spinner or characters on the same line as the headers.
+	// Normalize column indices relative to column 0 where "Name" starts in data rows.
+	if nameIdx > 0 {
+		idIdx -= nameIdx
+		versionIdx -= nameIdx
+		availableIdx -= nameIdx
+		sourceIdx -= nameIdx
 	}
 
 	// The row after headers should be a line of dashes, so we start at +2

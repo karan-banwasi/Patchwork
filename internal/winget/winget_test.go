@@ -71,3 +71,22 @@ func TestParseWingetOutput_Empty(t *testing.T) {
 		t.Fatalf("expected 0 updates, got %d", len(updates))
 	}
 }
+
+func TestParseWingetOutput_LeadingSpacesHeader(t *testing.T) {
+	sampleOutput := "    Name                                  Id                                     Version       Available     Source\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"Docker Desktop                            Docker.DockerDesktop                   4.30.0        4.31.0        winget\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	if updates[0].Name != "Docker Desktop" || updates[0].Id != "Docker.DockerDesktop" || updates[0].Version != "4.30.0" || updates[0].AvailableVersion != "4.31.0" {
+		t.Errorf("unexpected package parse result: %+v", updates[0])
+	}
+}
