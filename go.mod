@@ -24,7 +24,7 @@ require (
 	// Note: Version selection for x/text and x/image is pinned higher
 	// due to go-winres requirements. See README.md for detailed rationale.
 	golang.org/x/image v0.39.0 // indirect
-	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f // indirect
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.36.0 // indirect
 )
