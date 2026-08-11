@@ -77,10 +77,10 @@ var upgradeCmd = &cobra.Command{
 		var options []string
 		optionToUpdate := make(map[string]pm.PackageUpdate)
 
-		maxNameLen, maxIdLen, maxVersionLen := getDefaultPackageColumnWidths(updates)
+		maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(updates)
 
 		for _, pkg := range updates {
-			label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen)
+			label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
 			options = append(options, label)
 			optionToUpdate[label] = pkg
 		}

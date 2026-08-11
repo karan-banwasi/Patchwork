@@ -3,7 +3,9 @@ package cmd
 import (
 	"os"
 
+	"github.com/karan-banwasi/patchwork/internal/choco"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/scoop"
 	"github.com/karan-banwasi/patchwork/internal/winget"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +16,8 @@ var version = "dev" // overridden by -ldflags
 func getDefaultRegistry() *pm.Registry {
 	return pm.NewRegistry(
 		winget.NewWingetManager(),
+		scoop.NewScoopManager(),
+		choco.NewChocoManager(),
 	)
 }
 
@@ -22,7 +26,7 @@ var rootCmd = &cobra.Command{
 	Use:          "pw",
 	Version:      version,
 	Short:        "Patchwork is a CLI tool to manage package updates",
-	Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers like winget.`,
+	Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers including Winget, Scoop, and Chocolatey.`,
 	SilenceUsage: true,
 }
 

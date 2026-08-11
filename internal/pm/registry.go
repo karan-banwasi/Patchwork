@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"fmt"
+	"os"
 )
 
 // Registry manages the set of supported package managers.
@@ -61,7 +62,7 @@ func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error)
 		go func(mgr Manager) {
 			updates, err := mgr.GetAvailableUpdates(ctx)
 			if err != nil {
-				ch <- fetchResult{err: fmt.Errorf("[%s] error fetching updates: %w", mgr.Name(), err)}
+				ch <- fetchResult{err: fmt.Errorf("[%s] %w", mgr.Name(), err)}
 				return
 			}
 			ch <- fetchResult{updates: updates}
@@ -80,10 +81,14 @@ func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error)
 		}
 	}
 
-	if len(errs) > 0 && len(allUpdates) == 0 {
-		return nil, fmt.Errorf("failed to fetch updates: %v", errs)
+	if len(errs) > 0 {
+		if len(allUpdates) == 0 {
+			return nil, fmt.Errorf("failed to fetch updates: %v", errs)
+		}
+		for _, e := range errs {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", e)
+		}
 	}
 
 	return allUpdates, nil
 }
-

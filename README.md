@@ -6,7 +6,7 @@ A CLI tool to better manage package updates. Built natively in Go for Windows.
 - **Interactive Upgrades**: Select exactly which packages you want to upgrade using an intuitive checkbox interface directly in your terminal.
 - **Bulk Upgrades**: Use the `--all` flag to automatically apply all pending updates at once.
 - **Targeted Upgrades**: Upgrade a single app instantly by passing its Package ID.
-- **Winget Integration**: Leverages Windows Package Manager (`winget`) under the hood, parsing its output robustly to provide a seamless CLI experience.
+- **Multi-Package Manager Support**: Leverages Windows Package Manager (`winget`), Scoop (`scoop`), and Chocolatey (`choco`) under the hood, concurrently fetching and managing updates across all available package managers.
 
 ## Installation
 
@@ -74,6 +74,6 @@ pw --version
 
 ## Roadmap
 - [ ] Publish official `Patchwork` package to Windows Package Manager repository (`microsoft/winget-pkgs`) for native `winget install Patchwork` support.
-- [ ] Expand package manager support beyond Winget (Scoop, Chocolatey).
+- [x] Expand package manager support beyond Winget (Scoop, Chocolatey).
 - [ ] Group pending updates by package manager.
 
