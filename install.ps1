@@ -4,7 +4,24 @@ $ErrorActionPreference = "Stop"
 $repo = "karan-banwasi/Patchwork"
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"
 $exePath = Join-Path $installDir "pw.exe"
+# Resolve latest download URL (finds most recent release containing pw.exe)
 $downloadUrl = "https://github.com/$repo/releases/latest/download/pw.exe"
+$releaseTag = ""
+
+try {
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -UseBasicParsing
+    foreach ($rel in $releases) {
+        if ($rel.draft) { continue }
+        $asset = $rel.assets | Where-Object { $_.name -eq "pw.exe" } | Select-Object -First 1
+        if ($asset -and $asset.browser_download_url) {
+            $downloadUrl = $asset.browser_download_url
+            $releaseTag = $rel.tag_name
+            break
+        }
+    }
+} catch {
+    # Fall back to direct latest download URL if GitHub API query fails
+}
 
 Write-Host "Installing Patchwork (pw)..." -ForegroundColor Cyan
 
@@ -14,12 +31,13 @@ if (-not (Test-Path -Path $installDir)) {
 }
 
 # Download binary
-Write-Host "Downloading latest release from GitHub ($downloadUrl)..."
+$tagMsg = if ($releaseTag) { " $releaseTag" } else { "" }
+Write-Host "Downloading release$tagMsg from GitHub ($downloadUrl)..."
 try {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -UseBasicParsing
     Write-Host "Successfully downloaded pw.exe to $installDir" -ForegroundColor Green
 } catch {
-    Write-Error "Failed to download pw.exe. Make sure a release has been published on GitHub."
+    Write-Error "Failed to download pw.exe. Make sure a valid release with pw.exe has been published on GitHub."
     exit 1
 }
 
