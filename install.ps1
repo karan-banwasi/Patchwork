@@ -8,8 +8,10 @@ $exePath = Join-Path $installDir "pw.exe"
 $downloadUrl = "https://github.com/$repo/releases/latest/download/pw.exe"
 $releaseTag = ""
 
+$headers = @{ "User-Agent" = "PatchworkInstaller" }
+
 try {
-    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -UseBasicParsing
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers -UseBasicParsing
     foreach ($rel in $releases) {
         if ($rel.draft) { continue }
         $asset = $rel.assets | Where-Object { $_.name -eq "pw.exe" } | Select-Object -First 1
@@ -34,7 +36,7 @@ if (-not (Test-Path -Path $installDir)) {
 $tagMsg = if ($releaseTag) { " $releaseTag" } else { "" }
 Write-Host "Downloading release$tagMsg from GitHub ($downloadUrl)..."
 try {
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -UseBasicParsing
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $exePath -Headers $headers -UseBasicParsing
     Write-Host "Successfully downloaded pw.exe to $installDir" -ForegroundColor Green
 } catch {
     Write-Error "Failed to download pw.exe. Make sure a valid release with pw.exe has been published on GitHub."

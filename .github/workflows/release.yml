@@ -60,19 +60,8 @@ jobs:
           echo "Previous tag: $LATEST_TAG"
           echo "New tag: $NEW_TAG"
           
-          # Generate Windows resources (runs go-winres dynamically)
-          go generate ./...
-          
           # Cross-compile for Windows natively from Ubuntu for maximum speed
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
-          
-          # Configure Git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Push the new version tag
-          git tag $NEW_TAG
-          git push origin $NEW_TAG
           
           # Create a GitHub Release with the compiled Windows binary attached
           gh release create $NEW_TAG pw.exe --title "Release $NEW_TAG" --generate-notes
