@@ -30,7 +30,7 @@ var checkCmd = &cobra.Command{
 		
 		maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(updates)
 
-		headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds   %%-%ds   %%s\n", maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
+		headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds    %%-%ds   %%s\n", maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
 		
 		fmt.Printf(headerFmt, "Name", "ID", "Version", "Available", "Manager")
 		fmt.Printf(headerFmt, strings.Repeat("-", maxNameLen), strings.Repeat("-", maxIdLen), strings.Repeat("-", maxVersionLen), strings.Repeat("-", maxAvailLen), "-------")

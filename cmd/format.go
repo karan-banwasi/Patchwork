@@ -61,6 +61,6 @@ func formatUpdateRow(pkg pm.PackageUpdate, nameLen, idLen, verLen, availLen int)
 	if manager == "" {
 		manager = "unknown"
 	}
-	formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds   %%-%ds   %%s", nameLen, idLen, verLen, availLen)
+	formatStr := fmt.Sprintf("%%-%ds   %%-%ds   %%-%ds    %%-%ds   %%s", nameLen, idLen, verLen, availLen)
 	return fmt.Sprintf(formatStr, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion, manager)
 }
