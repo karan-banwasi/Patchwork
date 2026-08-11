@@ -15,7 +15,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version-file: 'go.mod'
           
       - name: Run go vet
         run: go vet ./...
@@ -38,14 +38,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version-file: 'go.mod'
 
       - name: Build and Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # Get the latest tag or default to v0.0.0
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Get the latest tag safely without failing under set -e
+          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
           
           # Parse and increment the patch version
           VERSION=${LATEST_TAG#v}
@@ -64,4 +68,4 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe main.go
           
           # Create a GitHub Release with the compiled Windows binary attached
-          gh release create $NEW_TAG pw.exe --title "Release $NEW_TAG" --generate-notes
+          gh release create "$NEW_TAG" pw.exe --title "Release $NEW_TAG" --generate-notes
