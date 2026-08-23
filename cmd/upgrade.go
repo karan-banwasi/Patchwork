@@ -3,8 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/AlecAivazis/survey/v2/core"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/spf13/cobra"
 )
@@ -129,7 +131,69 @@ var upgradeCmd = &cobra.Command{
 	},
 }
 
+// parseSelectedMultiSelectAnswers parses the comma-separated Answer string back into individual option strings
+// based on the provided list of valid options.
+func parseSelectedMultiSelectAnswers(answer string, options []string) []string {
+	if strings.TrimSpace(answer) == "" {
+		return nil
+	}
+
+	var selected []string
+	remaining := answer
+
+	for len(remaining) > 0 {
+		var matched string
+		for _, opt := range options {
+			if strings.HasPrefix(remaining, opt) {
+				if len(opt) > len(matched) {
+					matched = opt
+				}
+			}
+		}
+
+		if matched != "" {
+			selected = append(selected, matched)
+			remaining = strings.TrimPrefix(remaining, matched)
+			remaining = strings.TrimPrefix(remaining, ", ")
+		} else {
+			parts := strings.Split(remaining, ", ")
+			selected = append(selected, parts...)
+			break
+		}
+	}
+
+	return selected
+}
+
+func initSurveyTemplates() {
+	core.TemplateFuncsWithColor["parseSelectedAnswers"] = parseSelectedMultiSelectAnswers
+	survey.MultiSelectQuestionTemplate = `
+{{- define "option"}}
+    {{- if eq .SelectedIndex .CurrentIndex }}{{color .Config.Icons.SelectFocus.Format }}{{ .Config.Icons.SelectFocus.Text }}{{color "reset"}}{{else}} {{end}}
+    {{- if index .Checked .CurrentOpt.Index }}{{color .Config.Icons.MarkedOption.Format }} {{ .Config.Icons.MarkedOption.Text }} {{else}}{{color .Config.Icons.UnmarkedOption.Format }} {{ .Config.Icons.UnmarkedOption.Text }} {{end}}
+    {{- color "reset"}}
+    {{- " "}}{{- .CurrentOpt.Value}}{{ if ne ($.GetDescription .CurrentOpt) "" }} - {{color "cyan"}}{{ $.GetDescription .CurrentOpt }}{{color "reset"}}{{end}}
+{{end}}
+{{- if .ShowHelp }}{{- color .Config.Icons.Help.Format }}{{ .Config.Icons.Help.Text }} {{ .Help }}{{color "reset"}}{{"\n"}}{{end}}
+{{- color .Config.Icons.Question.Format }}{{ .Config.Icons.Question.Text }} {{color "reset"}}
+{{- color "default+hb"}}{{ .Message }}{{ .FilterMessage }}{{color "reset"}}
+{{- if .ShowAnswer}}
+  {{- range $ix, $opt := parseSelectedAnswers .Answer .Options}}
+    {{- "\n  "}}{{- color "cyan"}}{{$opt}}{{color "reset"}}
+  {{- end}}
+  {{- "\n"}}
+{{- else }}
+	{{- "  "}}{{- color "cyan"}}[Use arrows to move, space to select,{{- if not .Config.RemoveSelectAll }} <right> to all,{{end}}{{- if not .Config.RemoveSelectNone }} <left> to none,{{end}} type to filter{{- if and .Help (not .ShowHelp)}}, {{ .Config.HelpInput }} for more help{{end}}]{{color "reset"}}
+  {{- "\n"}}
+  {{- range $ix, $option := .PageEntries}}
+    {{- template "option" $.IterateOption $ix $option}}
+  {{- end}}
+{{- end}}`
+}
+
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
 	upgradeCmd.Flags().BoolVarP(&upgradeAll, "all", "a", false, "Upgrade all available packages")
+	initSurveyTemplates()
 }
+
