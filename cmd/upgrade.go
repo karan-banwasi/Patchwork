@@ -3,10 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/AlecAivazis/survey/v2/core"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/spf13/cobra"
 )
@@ -131,42 +129,7 @@ var upgradeCmd = &cobra.Command{
 	},
 }
 
-// parseSelectedMultiSelectAnswers parses the comma-separated Answer string back into individual option strings
-// based on the provided list of valid options.
-func parseSelectedMultiSelectAnswers(answer string, options []string) []string {
-	if strings.TrimSpace(answer) == "" {
-		return nil
-	}
-
-	var selected []string
-	remaining := answer
-
-	for len(remaining) > 0 {
-		var matched string
-		for _, opt := range options {
-			if strings.HasPrefix(remaining, opt) {
-				if len(opt) > len(matched) {
-					matched = opt
-				}
-			}
-		}
-
-		if matched != "" {
-			selected = append(selected, matched)
-			remaining = strings.TrimPrefix(remaining, matched)
-			remaining = strings.TrimPrefix(remaining, ", ")
-		} else {
-			parts := strings.Split(remaining, ", ")
-			selected = append(selected, parts...)
-			break
-		}
-	}
-
-	return selected
-}
-
 func initSurveyTemplates() {
-	core.TemplateFuncsWithColor["parseSelectedAnswers"] = parseSelectedMultiSelectAnswers
 	survey.MultiSelectQuestionTemplate = `
 {{- define "option"}}
     {{- if eq .SelectedIndex .CurrentIndex }}{{color .Config.Icons.SelectFocus.Format }}{{ .Config.Icons.SelectFocus.Text }}{{color "reset"}}{{else}} {{end}}
@@ -178,8 +141,10 @@ func initSurveyTemplates() {
 {{- color .Config.Icons.Question.Format }}{{ .Config.Icons.Question.Text }} {{color "reset"}}
 {{- color "default+hb"}}{{ .Message }}{{ .FilterMessage }}{{color "reset"}}
 {{- if .ShowAnswer}}
-  {{- range $ix, $opt := parseSelectedAnswers .Answer .Options}}
-    {{- "\n  "}}{{- color "cyan"}}{{$opt}}{{color "reset"}}
+  {{- range $ix, $opt := .Options}}
+    {{- if index $.Checked $ix}}
+      {{- "\n  "}}{{- color "cyan"}}{{$opt}}{{color "reset"}}
+    {{- end}}
   {{- end}}
   {{- "\n"}}
 {{- else }}
@@ -190,6 +155,7 @@ func initSurveyTemplates() {
   {{- end}}
 {{- end}}`
 }
+
 
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
