@@ -108,5 +108,61 @@ func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
 	t.Logf("core.RunTemplate output: %s", res)
 }
 
+func TestUpgradeCmd_MutuallyExclusiveAllAndArg(t *testing.T) {
+	upgradeAll = false
+	upgradeManager = ""
+	defer func() {
+		upgradeAll = false
+		upgradeManager = ""
+	}()
+	rootCmd.SetArgs([]string{"upgrade", "--all", "Some.Package"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error when combining --all and package argument, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestUpgradeCmd_UnknownManager(t *testing.T) {
+	upgradeAll = false
+	upgradeManager = ""
+	upgradeByManager = false
+	defer func() {
+		upgradeAll = false
+		upgradeManager = ""
+		upgradeByManager = false
+	}()
+	rootCmd.SetArgs([]string{"upgrade", "Some.Package", "-m", "unknown-mgr"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error for unknown manager, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown package manager") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestUpgradeCmd_MutuallyExclusiveByManagerAndArg(t *testing.T) {
+	upgradeAll = false
+	upgradeManager = ""
+	upgradeByManager = false
+	defer func() {
+		upgradeAll = false
+		upgradeManager = ""
+		upgradeByManager = false
+	}()
+	rootCmd.SetArgs([]string{"upgrade", "--by-manager", "Some.Package"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error when combining --by-manager and package argument, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+
 
 

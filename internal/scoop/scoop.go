@@ -46,6 +46,18 @@ func (s *ScoopManager) UpgradeAll(ctx context.Context) error {
 
 // scoopPath resolves the path to scoop CLI executable.
 func scoopPath() (string, error) {
+	// Check custom SCOOP and SCOOP_GLOBAL environment variables
+	for _, envKey := range []string{"SCOOP", "SCOOP_GLOBAL"} {
+		if envVal := os.Getenv(envKey); envVal != "" {
+			for _, shim := range []string{"scoop.cmd", "scoop.exe"} {
+				path := filepath.Join(envVal, "shims", shim)
+				if _, err := os.Stat(path); err == nil {
+					return path, nil
+				}
+			}
+		}
+	}
+
 	userProfile := os.Getenv("USERPROFILE")
 	if userProfile != "" {
 		shimCmd := filepath.Join(userProfile, "scoop", "shims", "scoop.cmd")
@@ -57,11 +69,10 @@ func scoopPath() (string, error) {
 			return shimExe, nil
 		}
 	}
-	if p, err := exec.LookPath("scoop.cmd"); err == nil {
-		return p, nil
-	}
-	if p, err := exec.LookPath("scoop"); err == nil {
-		return p, nil
+	for _, name := range []string{"scoop.cmd", "scoop.exe", "scoop"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
 	}
 	return "", fmt.Errorf("scoop executable not found")
 }

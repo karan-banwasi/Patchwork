@@ -2,7 +2,11 @@
 $ErrorActionPreference = "Stop"
 
 # Force TLS 1.2 / TLS 1.3 for GitHub compatibility on Windows PowerShell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12, Tls13'
+} catch {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $repo = "karan-banwasi/Patchwork"
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"

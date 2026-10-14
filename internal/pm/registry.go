@@ -2,8 +2,11 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 )
 
 // Registry manages the set of supported package managers.
@@ -23,10 +26,14 @@ func (r *Registry) Register(m Manager) {
 	r.managers = append(r.managers, m)
 }
 
-// GetManager returns a registered package manager by its name.
+// GetManager returns a registered package manager by its name (case-insensitive, supporting aliases).
 func (r *Registry) GetManager(name string) (Manager, bool) {
+	norm := strings.ToLower(strings.TrimSpace(name))
+	if norm == "chocolatey" {
+		norm = "choco"
+	}
 	for _, m := range r.managers {
-		if m.Name() == name {
+		if strings.EqualFold(m.Name(), norm) {
 			return m, true
 		}
 	}
@@ -71,19 +78,35 @@ func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error)
 
 	var allUpdates []PackageUpdate
 	var errs []error
+	seen := make(map[string]bool)
 
 	for i := 0; i < len(active); i++ {
 		res := <-ch
 		if res.err != nil {
 			errs = append(errs, res.err)
 		} else {
-			allUpdates = append(allUpdates, res.updates...)
+			for _, u := range res.updates {
+				key := u.ManagerName + ":" + u.Id
+				if !seen[key] {
+					seen[key] = true
+					allUpdates = append(allUpdates, u)
+				}
+			}
 		}
 	}
 
+	// Deterministically sort updates by ManagerName, then by package Name
+	sort.SliceStable(allUpdates, func(i, j int) bool {
+		if allUpdates[i].ManagerName != allUpdates[j].ManagerName {
+			return allUpdates[i].ManagerName < allUpdates[j].ManagerName
+		}
+		return strings.ToLower(allUpdates[i].Name) < strings.ToLower(allUpdates[j].Name)
+	})
+
 	if len(errs) > 0 {
-		if len(allUpdates) == 0 {
-			return nil, fmt.Errorf("failed to fetch updates: %v", errs)
+		// Only fail completely if every active manager encountered an error
+		if len(errs) == len(active) {
+			return nil, fmt.Errorf("failed to fetch updates: %w", errors.Join(errs...))
 		}
 		for _, e := range errs {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", e)

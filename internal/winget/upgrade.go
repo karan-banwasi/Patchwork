@@ -16,8 +16,8 @@ func UpgradePackage(ctx context.Context, id string) error {
 		return err
 	}
 	// We use the --silent or --quiet flag depending on the manager
-	// Winget supports --silent and --accept-source-agreements for smoother CLI flows
-	cmd := exec.CommandContext(ctx, exe, "upgrade", "--id", id, "--silent", "--accept-source-agreements", "--accept-package-agreements")
+	// Winget supports --exact, --silent, and agreements flags for deterministic CLI flows
+	cmd := exec.CommandContext(ctx, exe, "upgrade", "--id", id, "--exact", "--silent", "--accept-source-agreements", "--accept-package-agreements")
 	
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = os.Stdout

@@ -153,7 +153,7 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	
 	headerLineIdx := -1
 	for i, line := range lines {
-		if strings.Contains(line, "Name") && strings.Contains(line, "Id") && strings.Contains(line, "Version") && strings.Contains(line, "Available") {
+		if strings.Contains(line, "Name") && (strings.Contains(line, "Id") || strings.Contains(line, "ID")) && strings.Contains(line, "Version") && strings.Contains(line, "Available") {
 			headerLineIdx = i
 			break
 		}
@@ -180,6 +180,9 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	
 	nameIdx := indexRunes(headerRunes, "Name")
 	idIdx := indexRunes(headerRunes, "Id")
+	if idIdx == -1 {
+		idIdx = indexRunes(headerRunes, "ID")
+	}
 	versionIdx := indexRunes(headerRunes, "Version")
 	availableIdx := indexRunes(headerRunes, "Available")
 	sourceIdx := indexRunes(headerRunes, "Source")

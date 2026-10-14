@@ -50,19 +50,49 @@ go generate ./...
 pw check
 ```
 
+**Check updates grouped by package manager:**
+```powershell
+pw check --by-manager
+```
+
+**Check updates for a specific package manager only:**
+```powershell
+pw check -m winget
+# or
+pw check --manager scoop
+```
+
 **Open the interactive upgrade menu:**
 ```powershell
 pw upgrade
 ```
 
+**Upgrade packages grouped manager-by-manager:**
+```powershell
+pw upgrade --by-manager
+```
+
+**Open interactive upgrade for a specific package manager only:**
+```powershell
+pw upgrade -m scoop
+# or
+pw upgrade --manager winget
+```
+
 **Upgrade a specific package by ID:**
 ```powershell
 pw upgrade Microsoft.VisualStudioCode
+
+# Target a specific package manager explicitly:
+pw upgrade git -m scoop
 ```
 
 **Upgrade all available packages:**
 ```powershell
 pw upgrade --all
+
+# Upgrade all packages for a single manager:
+pw upgrade --all -m winget
 ```
 
 **Check the tool version:**
@@ -75,5 +105,5 @@ pw --version
 ## Roadmap
 - [ ] Publish official `Patchwork` package to Windows Package Manager repository (`microsoft/winget-pkgs`) for native `winget install Patchwork` support.
 - [x] Expand package manager support beyond Winget (Scoop, Chocolatey).
-- [ ] Group pending updates by package manager.
+- [x] Group pending updates by package manager (`--by-manager`).
 

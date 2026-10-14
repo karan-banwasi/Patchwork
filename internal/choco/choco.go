@@ -64,10 +64,6 @@ func chocoPath() (string, error) {
 
 // GetAvailableUpdates runs `choco outdated --limit-output` to fetch available updates.
 func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	if !isElevated() {
-		return nil, fmt.Errorf("Chocolatey is installed, but querying/upgrading packages requires Administrator privileges. Please rerun terminal as Administrator to include Chocolatey updates")
-	}
-
 	exe, err := chocoPath()
 	if err != nil {
 		return nil, err

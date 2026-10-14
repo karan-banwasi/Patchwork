@@ -140,4 +140,23 @@ func TestParseWingetOutput_LocalizedHeader(t *testing.T) {
 	}
 }
 
+func TestParseWingetOutput_UppercaseID(t *testing.T) {
+	sampleOutput := "Name                                      ID                                     Version       Available     Source\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"Notepad++                                 Notepad++.Notepad++                    8.5.8         8.6.0         winget\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	if updates[0].Name != "Notepad++" || updates[0].Id != "Notepad++.Notepad++" {
+		t.Errorf("unexpected package parse result: %+v", updates[0])
+	}
+}
+
 

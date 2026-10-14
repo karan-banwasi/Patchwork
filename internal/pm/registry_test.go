@@ -73,12 +73,26 @@ func TestRegistry_FetchAllUpdates(t *testing.T) {
 func TestRegistry_GetManager(t *testing.T) {
 	m1 := &mockManager{name: "winget", available: true}
 	m2 := &mockManager{name: "scoop", available: true}
+	m3 := &mockManager{name: "choco", available: true}
 
-	reg := NewRegistry(m1, m2)
+	reg := NewRegistry(m1, m2, m3)
 
+	// Exact match
 	mgr, found := reg.GetManager("winget")
 	if !found || mgr.Name() != "winget" {
 		t.Errorf("expected to find winget manager, got found=%v, mgr=%v", found, mgr)
+	}
+
+	// Case-insensitive match
+	mgrUpper, foundUpper := reg.GetManager("Winget")
+	if !foundUpper || mgrUpper.Name() != "winget" {
+		t.Errorf("expected to find winget manager via 'Winget', got found=%v, mgr=%v", foundUpper, mgrUpper)
+	}
+
+	// Alias match: chocolatey -> choco
+	mgrChoco, foundChoco := reg.GetManager("chocolatey")
+	if !foundChoco || mgrChoco.Name() != "choco" {
+		t.Errorf("expected to find choco manager via 'chocolatey' alias, got found=%v, mgr=%v", foundChoco, mgrChoco)
 	}
 
 	_, foundMissing := reg.GetManager("unknown")
@@ -100,4 +114,49 @@ func TestRegistry_FetchAllUpdates_Error(t *testing.T) {
 		t.Fatalf("expected error when all managers fail, got nil")
 	}
 }
+
+func TestRegistry_FetchAllUpdates_PartialFailureWithZeroUpdates(t *testing.T) {
+	m1 := &mockManager{
+		name:      "winget",
+		available: true,
+		updates:   []PackageUpdate{}, // succeeded with 0 updates
+		err:       nil,
+	}
+	m2 := &mockManager{
+		name:      "choco",
+		available: true,
+		err:       errors.New("elevation required"),
+	}
+
+	reg := NewRegistry(m1, m2)
+	updates, err := reg.FetchAllUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error when at least one manager succeeds, got: %v", err)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("expected 0 updates, got %d", len(updates))
+	}
+}
+
+func TestRegistry_FetchAllUpdates_Deduplication(t *testing.T) {
+	m1 := &mockManager{
+		name:      "winget",
+		available: true,
+		updates: []PackageUpdate{
+			{Name: "Git", Id: "Git.Git", Version: "2.40.0", ManagerName: "winget"},
+			{Name: "Git", Id: "Git.Git", Version: "2.40.0", ManagerName: "winget"}, // duplicate
+		},
+		err: nil,
+	}
+
+	reg := NewRegistry(m1)
+	updates, err := reg.FetchAllUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 deduplicated update, got %d", len(updates))
+	}
+}
+
 
