@@ -159,4 +159,52 @@ func TestParseWingetOutput_UppercaseID(t *testing.T) {
 	}
 }
 
+func TestShouldOmitSilent(t *testing.T) {
+	tests := []struct {
+		id       string
+		expected bool
+	}{
+		{"Microsoft.PowerShell", true},
+		{"Microsoft.PowerShell.Preview", true},
+		{"microsoft.powershell", true},
+		{"MICROSOFT.POWERSHELL", true},
+		{"Microsoft.WindowsTerminal", true},
+		{"Microsoft.WindowsTerminal.Preview", true},
+		{"Git.Git", false},
+		{"JanDeDobbeleer.OhMyPosh", false},
+		{"Docker.DockerDesktop", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.id, func(t *testing.T) {
+			actual := shouldOmitSilent(tc.id)
+			if actual != tc.expected {
+				t.Errorf("shouldOmitSilent(%q) = %v, expected %v", tc.id, actual, tc.expected)
+			}
+		})
+	}
+}
+
+func TestBuildUpgradeArgs(t *testing.T) {
+	psArgs := buildUpgradeArgs("Microsoft.PowerShell")
+	for _, arg := range psArgs {
+		if arg == "--silent" {
+			t.Errorf("expected --silent to be omitted for Microsoft.PowerShell, got args: %v", psArgs)
+		}
+	}
+
+	gitArgs := buildUpgradeArgs("Git.Git")
+	hasSilent := false
+	for _, arg := range gitArgs {
+		if arg == "--silent" {
+			hasSilent = true
+			break
+		}
+	}
+	if !hasSilent {
+		t.Errorf("expected --silent to be included for Git.Git, got args: %v", gitArgs)
+	}
+}
+
+
 
