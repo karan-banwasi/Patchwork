@@ -1,6 +1,9 @@
 package winget
 
 import (
+	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -203,6 +206,54 @@ func TestBuildUpgradeArgs(t *testing.T) {
 	}
 	if !hasSilent {
 		t.Errorf("expected --silent to be included for Git.Git, got args: %v", gitArgs)
+	}
+}
+
+func TestBuildIsolatedUpgradeScript(t *testing.T) {
+	args := buildUpgradeArgs("Microsoft.PowerShell")
+	script := buildIsolatedUpgradeScript(
+		`C:\Users\test\AppData\Local\Microsoft\WindowsApps\winget.exe`,
+		"Microsoft.PowerShell",
+		args,
+		`C:\Users\test\AppData\Local\Temp\patchwork-isolated-upgrade.status`,
+	)
+
+	expectedSubstrings := []string{
+		"@echo off",
+		"title Patchwork - Upgrading Microsoft.PowerShell",
+		`"C:\Users\test\AppData\Local\Microsoft\WindowsApps\winget.exe" upgrade --id Microsoft.PowerShell --exact --accept-source-agreements --accept-package-agreements`,
+		`set "EXIT_CODE=%ERRORLEVEL%"`,
+		`> "C:\Users\test\AppData\Local\Temp\patchwork-isolated-upgrade.status" echo %EXIT_CODE%`,
+		`if NOT "%EXIT_CODE%"=="0" (`,
+		"pause",
+		"exit /b %EXIT_CODE%",
+	}
+
+	for _, sub := range expectedSubstrings {
+		if !strings.Contains(script, sub) {
+			t.Errorf("expected isolated upgrade script to contain %q, got:\n%s", sub, script)
+		}
+	}
+}
+
+func TestParseIsolatedUpgradeStatus(t *testing.T) {
+	if err := parseIsolatedUpgradeStatus("Microsoft.PowerShell", "0\r\n", nil, nil); err != nil {
+		t.Errorf("expected nil error for status 0, got: %v", err)
+	}
+
+	err1603 := parseIsolatedUpgradeStatus("Microsoft.PowerShell", "1603\r\n", nil, nil)
+	if err1603 == nil || !strings.Contains(err1603.Error(), "exit code 1603") {
+		t.Errorf("expected exit code 1603 error, got: %v", err1603)
+	}
+
+	errInterrupted := parseIsolatedUpgradeStatus("Microsoft.PowerShell", "", os.ErrNotExist, nil)
+	if errInterrupted == nil || !strings.Contains(errInterrupted.Error(), "interrupted or closed before completion") {
+		t.Errorf("expected interrupted error when status file is missing, got: %v", errInterrupted)
+	}
+
+	errRun := parseIsolatedUpgradeStatus("Microsoft.PowerShell", "", os.ErrNotExist, errors.New("process failed"))
+	if errRun == nil || !strings.Contains(errRun.Error(), "process failed") {
+		t.Errorf("expected underlying runErr when status file is missing, got: %v", errRun)
 	}
 }
 

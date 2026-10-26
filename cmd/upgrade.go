@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -219,6 +220,8 @@ var upgradeCmd = &cobra.Command{
 			return nil
 		}
 
+		selectedPackages = orderSelectedPackages(selectedPackages)
+
 		fmt.Printf("\nUpgrading %d packages...\n", len(selectedPackages))
 		hadError := false
 		for _, pkg := range selectedPackages {
@@ -244,6 +247,27 @@ var upgradeCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func isDeferredUpgradePackage(pkg pm.PackageUpdate) bool {
+	lower := strings.ToLower(strings.TrimSpace(pkg.Id))
+	return strings.HasPrefix(lower, "microsoft.powershell") ||
+		strings.HasPrefix(lower, "microsoft.windowsterminal") ||
+		lower == "pwsh" ||
+		lower == "powershell" ||
+		lower == "windows-terminal"
+}
+
+// orderSelectedPackages moves self-updating shell and terminal packages to the end
+// of the upgrade queue so that other selected packages complete before the host shell
+// or terminal is closed by its installer.
+func orderSelectedPackages(pkgs []pm.PackageUpdate) []pm.PackageUpdate {
+	ordered := make([]pm.PackageUpdate, len(pkgs))
+	copy(ordered, pkgs)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return !isDeferredUpgradePackage(ordered[i]) && isDeferredUpgradePackage(ordered[j])
+	})
+	return ordered
 }
 
 func initSurveyTemplates() {

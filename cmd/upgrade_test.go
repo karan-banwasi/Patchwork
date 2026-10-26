@@ -7,6 +7,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/AlecAivazis/survey/v2/core"
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
@@ -160,6 +161,32 @@ func TestUpgradeCmd_MutuallyExclusiveByManagerAndArg(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
+	input := []pm.PackageUpdate{
+		{Id: "Microsoft.PowerShell", Name: "PowerShell", ManagerName: "winget"},
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+		{Id: "Microsoft.WindowsTerminal", Name: "Windows Terminal", ManagerName: "winget"},
+		{Id: "OpenJS.NodeJS.LTS", Name: "Node.js LTS", ManagerName: "winget"},
+	}
+
+	ordered := orderSelectedPackages(input)
+	expectedOrder := []string{
+		"Git.Git",
+		"OpenJS.NodeJS.LTS",
+		"Microsoft.PowerShell",
+		"Microsoft.WindowsTerminal",
+	}
+
+	if len(ordered) != len(expectedOrder) {
+		t.Fatalf("expected %d packages, got %d", len(expectedOrder), len(ordered))
+	}
+	for i, exp := range expectedOrder {
+		if ordered[i].Id != exp {
+			t.Errorf("at index %d: expected %q, got %q", i, exp, ordered[i].Id)
+		}
 	}
 }
 

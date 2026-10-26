@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,7 +22,7 @@ func UpgradePackage(ctx context.Context, id string) error {
 	var stderrBuf bytes.Buffer
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = &stderrBuf
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 
 	if err := cmd.Run(); err != nil {
 		stderrStr := strings.TrimSpace(stderrBuf.String())
