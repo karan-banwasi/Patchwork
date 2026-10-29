@@ -62,36 +62,54 @@ func (c *Config) Save() error {
 	return c.SaveTo(path)
 }
 
-// SaveTo writes the configuration to a specific path.
+// SaveTo writes the configuration to a specific path with user-only permissions (0700/0600).
 func (c *Config) SaveTo(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
-// Pin adds a package ID to the pinned list if not already present. Returns true if newly pinned.
+func normalizePinEntry(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if idx := strings.IndexByte(trimmed, ':'); idx > 0 && idx < len(trimmed)-1 {
+		mgr := strings.ToLower(strings.TrimSpace(trimmed[:idx]))
+		id := strings.TrimSpace(trimmed[idx+1:])
+		if mgr != "" && id != "" {
+			return mgr + ":" + id
+		}
+	}
+	return trimmed
+}
+
+// Pin adds a package ID (optionally scoped as "manager:id") to the pinned list if not already present.
+// Returns true if newly pinned.
 func (c *Config) Pin(id string) bool {
-	trimmed := strings.TrimSpace(id)
-	if trimmed == "" || c.IsPinned(trimmed, "") {
+	norm := normalizePinEntry(id)
+	if norm == "" {
 		return false
 	}
-	c.PinnedPackages = append(c.PinnedPackages, trimmed)
+	for _, existing := range c.PinnedPackages {
+		if strings.EqualFold(existing, norm) {
+			return false
+		}
+	}
+	c.PinnedPackages = append(c.PinnedPackages, norm)
 	sort.Strings(c.PinnedPackages)
 	return true
 }
 
-// Unpin removes a package ID from the pinned list. Returns true if it was present and removed.
+// Unpin removes a package ID (or "manager:id") from the pinned list. Returns true if it was present and removed.
 func (c *Config) Unpin(id string) bool {
-	trimmed := strings.TrimSpace(id)
+	norm := normalizePinEntry(id)
 	var kept []string
 	removed := false
 	for _, p := range c.PinnedPackages {
-		if strings.EqualFold(p, trimmed) {
+		if strings.EqualFold(p, norm) {
 			removed = true
 			continue
 		}
@@ -101,13 +119,32 @@ func (c *Config) Unpin(id string) bool {
 	return removed
 }
 
-// IsPinned returns true if a package ID or Name is in the pinned list.
+// IsPinned returns true if an unscoped package ID matches the pinned list.
 func (c *Config) IsPinned(id, name string) bool {
-	if c == nil {
+	return c.IsPinnedForManager("", id, name)
+}
+
+// IsPinnedForManager returns true if the given package (identified by manager and id) is pinned.
+// Entries formatted as "manager:id" only match that specific manager; unscoped entries match any manager by package ID.
+func (c *Config) IsPinnedForManager(manager, id, _ string) bool {
+	if c == nil || id == "" {
 		return false
 	}
+	mgrNorm := strings.ToLower(strings.TrimSpace(manager))
 	for _, p := range c.PinnedPackages {
-		if strings.EqualFold(p, id) || (name != "" && strings.EqualFold(p, name)) {
+		if idx := strings.IndexByte(p, ':'); idx > 0 && idx < len(p)-1 {
+			pinMgr := strings.ToLower(strings.TrimSpace(p[:idx]))
+			pinID := strings.TrimSpace(p[idx+1:])
+			if mgrNorm != "" && strings.EqualFold(pinMgr, mgrNorm) && strings.EqualFold(pinID, id) {
+				return true
+			}
+			// Also allow exact match when caller passes "manager:id" as id
+			if strings.EqualFold(p, id) {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(p, id) {
 			return true
 		}
 	}
@@ -120,15 +157,18 @@ type UpdateCache struct {
 	Updates   []pm.PackageUpdate `json:"updates"`
 }
 
-// CachePath returns the path to the temporary update cache file.
+// CachePath returns the path to the user-scoped update cache file.
 func CachePath() string {
 	if custom := os.Getenv("PATCHWORK_CACHE"); custom != "" {
 		return custom
 	}
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "Patchwork", "updates-cache.json")
+	}
 	return filepath.Join(os.TempDir(), "patchwork-updates-cache.json")
 }
 
-// SaveUpdateCache writes the latest update check results to the temporary cache file.
+// SaveUpdateCache writes the latest update check results to the cache file with 0700/0600 permissions.
 func SaveUpdateCache(updates []pm.PackageUpdate) error {
 	cache := UpdateCache{
 		UpdatedAt: time.Now(),
@@ -138,7 +178,11 @@ func SaveUpdateCache(updates []pm.PackageUpdate) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(CachePath(), data, 0600)
+	path := CachePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
 }
 
 // LoadUpdateCache reads cached package updates if the cache file exists and is newer than maxAge.

@@ -5,26 +5,38 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 // UpgradePackage upgrades a specific package by its ID using scoop update.
-func UpgradePackage(ctx context.Context, id string) error {
+func (s *ScoopManager) UpgradePackage(ctx context.Context, id string) error {
+	if err := s.ValidateID(id); err != nil {
+		return err
+	}
+
 	exe, err := scoopPath()
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "update", id)
+	stdout := s.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := s.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	runner := s.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
 
 	var stderrBuf bytes.Buffer
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-
-	if err := cmd.Run(); err != nil {
+	if err := runner.Run(ctx, exe, []string{"update", id}, s.stdin, stdout, io.MultiWriter(stderr, &stderrBuf)); err != nil {
 		stderrStr := strings.TrimSpace(stderrBuf.String())
 		if stderrStr != "" {
 			return fmt.Errorf("scoop update failed: %w (%s)", err, stderrStr)
@@ -34,20 +46,7 @@ func UpgradePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpgradeAll upgrades all outdated scoop packages.
-func UpgradeAll(ctx context.Context) error {
-	updates, err := GetAvailableUpdates(ctx)
-	if err != nil {
-		return err
-	}
-	var hadErr bool
-	for _, u := range updates {
-		if err := UpgradePackage(ctx, u.Id); err != nil {
-			hadErr = true
-		}
-	}
-	if hadErr {
-		return fmt.Errorf("one or more scoop package upgrades failed")
-	}
-	return nil
+// UpgradePackage is a package-level helper for convenience.
+func UpgradePackage(ctx context.Context, id string) error {
+	return NewScoopManager().UpgradePackage(ctx, id)
 }

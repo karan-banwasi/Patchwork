@@ -13,9 +13,10 @@ func TestPinUnpinPinnedCmds(t *testing.T) {
 
 	// 1. Pinned initially empty
 	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"pinned"})
-	if err := rootCmd.Execute(); err != nil {
+	cmd1 := NewRootCmd()
+	cmd1.SetOut(buf)
+	cmd1.SetArgs([]string{"pinned"})
+	if err := cmd1.Execute(); err != nil {
 		t.Fatalf("unexpected error on pinned: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No packages are currently pinned.") {
@@ -24,8 +25,10 @@ func TestPinUnpinPinnedCmds(t *testing.T) {
 
 	// 2. Pin multiple packages at once
 	buf.Reset()
-	rootCmd.SetArgs([]string{"pin", "Git.Git", "Microsoft.VisualStudioCode"})
-	if err := rootCmd.Execute(); err != nil {
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(buf)
+	cmd2.SetArgs([]string{"pin", "Git.Git", "Microsoft.VisualStudioCode"})
+	if err := cmd2.Execute(); err != nil {
 		t.Fatalf("unexpected error on pin: %v", err)
 	}
 	if !strings.Contains(buf.String(), `Pinned package "Git.Git"`) || !strings.Contains(buf.String(), `Pinned package "Microsoft.VisualStudioCode"`) {
@@ -34,8 +37,10 @@ func TestPinUnpinPinnedCmds(t *testing.T) {
 
 	// 3. List pinned
 	buf.Reset()
-	rootCmd.SetArgs([]string{"pinned"})
-	if err := rootCmd.Execute(); err != nil {
+	cmd3 := NewRootCmd()
+	cmd3.SetOut(buf)
+	cmd3.SetArgs([]string{"pinned"})
+	if err := cmd3.Execute(); err != nil {
 		t.Fatalf("unexpected error on pinned: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Git.Git") || !strings.Contains(buf.String(), "Microsoft.VisualStudioCode") {
@@ -44,8 +49,10 @@ func TestPinUnpinPinnedCmds(t *testing.T) {
 
 	// 4. Unpin multiple packages
 	buf.Reset()
-	rootCmd.SetArgs([]string{"unpin", "git.git", "microsoft.visualstudiocode"})
-	if err := rootCmd.Execute(); err != nil {
+	cmd4 := NewRootCmd()
+	cmd4.SetOut(buf)
+	cmd4.SetArgs([]string{"unpin", "git.git", "microsoft.visualstudiocode"})
+	if err := cmd4.Execute(); err != nil {
 		t.Fatalf("unexpected error on unpin: %v", err)
 	}
 	if !strings.Contains(buf.String(), `Unpinned package "git.git"`) || !strings.Contains(buf.String(), `Unpinned package "microsoft.visualstudiocode"`) {

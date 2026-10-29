@@ -23,4 +23,8 @@ func TestParsePSResourceJSON_ArrayAndSingle(t *testing.T) {
 	if len(singleUpdates) != 1 || singleUpdates[0].Id != "Terminal-Icons" {
 		t.Errorf("unexpected single update result: %+v", singleUpdates)
 	}
+
+	if _, err := parsePSResourceJSON("{malformed"); err == nil {
+		t.Errorf("expected parse error for malformed JSON, got nil")
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,15 +17,64 @@ import (
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
 
 // ChocoManager implements the pm.Manager interface for Chocolatey package manager.
-type ChocoManager struct{}
+type ChocoManager struct {
+	runner pm.Runner
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
 
 // NewChocoManager creates a new instance of ChocoManager.
 func NewChocoManager() *ChocoManager {
-	return &ChocoManager{}
+	return &ChocoManager{
+		runner: pm.ExecRunner{},
+		stdout: io.Discard,
+		stderr: io.Discard,
+	}
 }
 
 func (c *ChocoManager) Name() string {
 	return "choco"
+}
+
+func (c *ChocoManager) Aliases() []string {
+	return []string{"chocolatey"}
+}
+
+func (c *ChocoManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
+	c.stdin = stdin
+	if stdout != nil {
+		c.stdout = stdout
+	} else {
+		c.stdout = io.Discard
+	}
+	if stderr != nil {
+		c.stderr = stderr
+	} else {
+		c.stderr = io.Discard
+	}
+}
+
+func (c *ChocoManager) ValidateID(id string) error {
+	return pm.ValidateChocoID(id)
+}
+
+// Path resolves the path to the Chocolatey executable.
+func (c *ChocoManager) Path() (string, error) {
+	return chocoPath()
+}
+
+// Version returns the installed Chocolatey version string.
+func (c *ChocoManager) Version(ctx context.Context) (string, error) {
+	exe, err := chocoPath()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.CommandContext(ctx, exe, "--version").Output()
+	if err != nil {
+		return "unknown", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (c *ChocoManager) IsAvailable(ctx context.Context) bool {
@@ -32,20 +82,11 @@ func (c *ChocoManager) IsAvailable(ctx context.Context) bool {
 	return err == nil
 }
 
-func (c *ChocoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	return GetAvailableUpdates(ctx)
-}
-
-func (c *ChocoManager) UpgradePackage(ctx context.Context, id string) error {
-	return UpgradePackage(ctx, id)
-}
-
-func (c *ChocoManager) UpgradeAll(ctx context.Context) error {
-	return UpgradeAll(ctx)
-}
-
-// chocoPath resolves the path to Chocolatey executable.
+// chocoPath resolves the path to Chocolatey executable for non-elevated operations.
 func chocoPath() (string, error) {
+	if p, err := trustedChocoPath(); err == nil {
+		return p, nil
+	}
 	programData := os.Getenv("ProgramData")
 	if programData != "" {
 		chocoExe := filepath.Join(programData, "chocolatey", "bin", "choco.exe")
@@ -63,18 +104,19 @@ func chocoPath() (string, error) {
 }
 
 // GetAvailableUpdates runs `choco outdated --limit-output` to fetch available updates.
-func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+func (c *ChocoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	exe, err := chocoPath()
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "outdated", "--limit-output")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	runner := c.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
 
-	err = cmd.Run()
+	var stdout, stderr bytes.Buffer
+	err = runner.Run(ctx, exe, []string{"outdated", "--limit-output"}, nil, &stdout, &stderr)
 	outputStr := stdout.String()
 	stderrStr := strings.TrimSpace(stderr.String())
 
@@ -94,6 +136,11 @@ func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	}
 
 	return updates, nil
+}
+
+// GetAvailableUpdates is a package-level helper for convenience.
+func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	return NewChocoManager().GetAvailableUpdates(ctx)
 }
 
 // parseChocoOutput parses the output of `choco outdated`.
@@ -122,7 +169,7 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 				current := strings.TrimSpace(parts[1])
 				available := strings.TrimSpace(parts[2])
 
-				if name != "" && current != "" && available != "" {
+				if name != "" && current != "" && available != "" && pm.ValidateChocoID(name) == nil {
 					updates = append(updates, pm.PackageUpdate{
 						Name:             name,
 						Id:               name,
@@ -142,14 +189,16 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 			if len(fields) >= 4 && strings.EqualFold(fields[3], "true") {
 				continue
 			}
-			updates = append(updates, pm.PackageUpdate{
-				Name:             fields[0],
-				Id:               fields[0],
-				Version:          fields[1],
-				AvailableVersion: fields[2],
-				Source:           "chocolatey",
-				ManagerName:      "choco",
-			})
+			if pm.ValidateChocoID(fields[0]) == nil {
+				updates = append(updates, pm.PackageUpdate{
+					Name:             fields[0],
+					Id:               fields[0],
+					Version:          fields[1],
+					AvailableVersion: fields[2],
+					Source:           "chocolatey",
+					ManagerName:      "choco",
+				})
+			}
 		}
 	}
 

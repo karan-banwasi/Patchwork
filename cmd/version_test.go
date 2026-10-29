@@ -8,10 +8,11 @@ import (
 
 func TestVersionCmd(t *testing.T) {
 	buf := new(bytes.Buffer)
-	rootCmd.SetOut(buf)
-	rootCmd.SetArgs([]string{"version"})
+	cmd := NewRootCmd()
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"version"})
 
-	err := rootCmd.Execute()
+	err := cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error executing version command: %v", err)
 	}

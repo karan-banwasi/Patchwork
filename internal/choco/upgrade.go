@@ -5,35 +5,64 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 // UpgradePackage upgrades a specific package by its ID using choco upgrade -y.
-func UpgradePackage(ctx context.Context, id string) error {
+func (c *ChocoManager) UpgradePackage(ctx context.Context, id string) error {
+	return c.UpgradePackages(ctx, []string{id})
+}
+
+// UpgradePackages upgrades one or more Chocolatey packages in a single invocation
+// so that non-elevated runs trigger at most one UAC prompt.
+func (c *ChocoManager) UpgradePackages(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if err := c.ValidateID(id); err != nil {
+			return err
+		}
+	}
+
+	stdout := c.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := c.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	args := make([]string, 0, len(ids)+3)
+	args = append(args, "upgrade")
+	args = append(args, ids...)
+	args = append(args, "-y", "--no-progress")
+
+	if !isElevated() {
+		exe, err := trustedChocoPath()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Chocolatey requires Administrator privileges to upgrade %s. Requesting UAC elevation...\n", strings.Join(ids, ", "))
+		return runElevated(ctx, exe, args...)
+	}
+
 	exe, err := chocoPath()
 	if err != nil {
 		return err
 	}
 
-	if !isElevated() {
-		fmt.Printf("Chocolatey requires Administrator privileges to upgrade %s. Requesting UAC elevation...\n", id)
-		return runElevated(exe, "upgrade", id, "-y", "--no-progress")
+	runner := c.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "upgrade", id, "-y", "--no-progress")
-
 	var stderrBuf bytes.Buffer
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-
-	if err := cmd.Run(); err != nil {
+	if err := runner.Run(ctx, exe, args, c.stdin, stdout, io.MultiWriter(stderr, &stderrBuf)); err != nil {
 		stderrStr := strings.TrimSpace(stderrBuf.String())
-		if strings.Contains(stderrStr, "Access to the path") || strings.Contains(stderrStr, "denied") || strings.Contains(stderrStr, "elevated command shell") {
-			return fmt.Errorf("chocolatey requires Administrator privileges to upgrade packages. Please rerun Patchwork in an elevated shell (Run as Administrator)")
-		}
 		if stderrStr != "" {
 			return fmt.Errorf("choco upgrade failed: %w (%s)", err, stderrStr)
 		}
@@ -42,20 +71,7 @@ func UpgradePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpgradeAll upgrades all outdated chocolatey packages.
-func UpgradeAll(ctx context.Context) error {
-	updates, err := GetAvailableUpdates(ctx)
-	if err != nil {
-		return err
-	}
-	var hadErr bool
-	for _, u := range updates {
-		if err := UpgradePackage(ctx, u.Id); err != nil {
-			hadErr = true
-		}
-	}
-	if hadErr {
-		return fmt.Errorf("one or more chocolatey package upgrades failed")
-	}
-	return nil
+// UpgradePackage is a package-level helper for convenience.
+func UpgradePackage(ctx context.Context, id string) error {
+	return NewChocoManager().UpgradePackage(ctx, id)
 }

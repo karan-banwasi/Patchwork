@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -18,14 +18,61 @@ import (
 )
 
 // CargoManager implements the pm.Manager interface for Rust global binaries installed via `cargo install`.
-type CargoManager struct{}
+type CargoManager struct {
+	runner pm.Runner
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
 
 func NewCargoManager() *CargoManager {
-	return &CargoManager{}
+	return &CargoManager{
+		runner: pm.ExecRunner{},
+		stdout: io.Discard,
+		stderr: io.Discard,
+	}
 }
 
 func (c *CargoManager) Name() string {
 	return "cargo"
+}
+
+func (c *CargoManager) Aliases() []string {
+	return []string{"rust"}
+}
+
+func (c *CargoManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
+	c.stdin = stdin
+	if stdout != nil {
+		c.stdout = stdout
+	} else {
+		c.stdout = io.Discard
+	}
+	if stderr != nil {
+		c.stderr = stderr
+	} else {
+		c.stderr = io.Discard
+	}
+}
+
+func (c *CargoManager) ValidateID(id string) error {
+	return pm.ValidateCargoID(id)
+}
+
+func (c *CargoManager) Path() (string, error) {
+	return cargoPath()
+}
+
+func (c *CargoManager) Version(ctx context.Context) (string, error) {
+	exe, err := cargoPath()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.CommandContext(ctx, exe, "--version").Output()
+	if err != nil {
+		return "unknown", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "cargo "), nil
 }
 
 func (c *CargoManager) IsAvailable(ctx context.Context) bool {
@@ -56,7 +103,7 @@ func parseCargoInstallList(output string) []pm.PackageUpdate {
 			continue
 		}
 		m := cargoCrateLineRegex.FindStringSubmatch(trimmed)
-		if len(m) == 3 {
+		if len(m) == 3 && pm.ValidateCargoID(m[1]) == nil {
 			crates = append(crates, pm.PackageUpdate{
 				Name:        m[1],
 				Id:          m[1],
@@ -107,10 +154,13 @@ func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "install", "--list")
+	runner := c.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	if err := runner.Run(ctx, exe, []string{"install", "--list"}, nil, &stdout, io.Discard); err != nil {
 		return []pm.PackageUpdate{}, nil
 	}
 
@@ -152,29 +202,27 @@ func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 }
 
 func (c *CargoManager) UpgradePackage(ctx context.Context, id string) error {
+	if err := c.ValidateID(id); err != nil {
+		return err
+	}
 	exe, err := cargoPath()
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "install", id)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	runner := c.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	stdout := c.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := c.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	if err := runner.Run(ctx, exe, []string{"install", id}, c.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("cargo install failed for %s: %w", id, err)
-	}
-	return nil
-}
-
-func (c *CargoManager) UpgradeAll(ctx context.Context) error {
-	updates, err := c.GetAvailableUpdates(ctx)
-	if err != nil {
-		return err
-	}
-	for _, cr := range updates {
-		if err := c.UpgradePackage(ctx, cr.Id); err != nil {
-			return err
-		}
 	}
 	return nil
 }

@@ -102,3 +102,11 @@ Chocolatey has determined 1 package(s) are outdated.`
 		t.Errorf("expected git.install, got %q", updates[0].Id)
 	}
 }
+
+func TestFormatElevatedArgs_EscapesBackslashesAndQuotes(t *testing.T) {
+	got := formatElevatedArgs([]string{"upgrade", "git.install", `C:\Path With Spaces\`, "-y"})
+	want := `upgrade git.install "C:\Path With Spaces\\" -y`
+	if got != want {
+		t.Errorf("formatElevatedArgs got %q, want %q", got, want)
+	}
+}

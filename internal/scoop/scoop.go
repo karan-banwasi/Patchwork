@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,15 +17,74 @@ import (
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
 
 // ScoopManager implements the pm.Manager interface for Scoop package manager.
-type ScoopManager struct{}
+type ScoopManager struct {
+	runner pm.Runner
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
 
 // NewScoopManager creates a new instance of ScoopManager.
 func NewScoopManager() *ScoopManager {
-	return &ScoopManager{}
+	return &ScoopManager{
+		runner: pm.ExecRunner{},
+		stdout: io.Discard,
+		stderr: io.Discard,
+	}
 }
 
 func (s *ScoopManager) Name() string {
 	return "scoop"
+}
+
+func (s *ScoopManager) Aliases() []string {
+	return nil
+}
+
+func (s *ScoopManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
+	s.stdin = stdin
+	if stdout != nil {
+		s.stdout = stdout
+	} else {
+		s.stdout = io.Discard
+	}
+	if stderr != nil {
+		s.stderr = stderr
+	} else {
+		s.stderr = io.Discard
+	}
+}
+
+func (s *ScoopManager) ValidateID(id string) error {
+	return pm.ValidateScoopID(id)
+}
+
+// Path resolves the path to the scoop CLI executable.
+func (s *ScoopManager) Path() (string, error) {
+	return scoopPath()
+}
+
+// Version returns the installed status/version for Scoop.
+func (s *ScoopManager) Version(ctx context.Context) (string, error) {
+	if _, err := scoopPath(); err != nil {
+		return "", err
+	}
+	return "installed", nil
+}
+
+// Cleanup removes outdated package versions and clears the Scoop download cache.
+func (s *ScoopManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Writer) error {
+	exe, err := scoopPath()
+	if err != nil {
+		return nil
+	}
+	fmt.Fprintln(out, "--- Cleaning up Scoop (old versions & download cache) ---")
+	runner := s.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	_ = runner.Run(ctx, exe, []string{"cleanup", "*"}, nil, out, errOut)
+	return runner.Run(ctx, exe, []string{"cache", "rm", "*"}, nil, out, errOut)
 }
 
 func (s *ScoopManager) IsAvailable(ctx context.Context) bool {
@@ -32,16 +92,17 @@ func (s *ScoopManager) IsAvailable(ctx context.Context) bool {
 	return err == nil
 }
 
-func (s *ScoopManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	return GetAvailableUpdates(ctx)
-}
-
-func (s *ScoopManager) UpgradePackage(ctx context.Context, id string) error {
-	return UpgradePackage(ctx, id)
-}
-
-func (s *ScoopManager) UpgradeAll(ctx context.Context) error {
-	return UpgradeAll(ctx)
+// Refresh updates local Scoop buckets so subsequent `scoop status` calls compare against upstream manifests.
+func (s *ScoopManager) Refresh(ctx context.Context) error {
+	exe, err := scoopPath()
+	if err != nil {
+		return err
+	}
+	runner := s.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	return runner.Run(ctx, exe, []string{"update"}, nil, io.Discard, io.Discard)
 }
 
 // scoopPath resolves the path to scoop CLI executable.
@@ -77,30 +138,22 @@ func scoopPath() (string, error) {
 	return "", fmt.Errorf("scoop executable not found")
 }
 
-// GetAvailableUpdates runs `scoop status` to retrieve outdated packages.
-func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+// GetAvailableUpdates runs `scoop status` (read-only) to retrieve outdated packages.
+func (s *ScoopManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	exe, err := scoopPath()
 	if err != nil {
 		return nil, err
 	}
 
-	// Refresh local Scoop buckets so `scoop status` compares against upstream manifests.
-	// Ignore errors here in case the machine is temporarily offline or a single bucket fails.
-	_ = exec.CommandContext(ctx, exe, "update").Run()
+	runner := s.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
 
-	cmd := exec.CommandContext(ctx, exe, "status")
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
+	err = runner.Run(ctx, exe, []string{"status"}, nil, &stdout, &stderr)
 	outputStr := stdout.String()
 	stderrStr := strings.TrimSpace(stderr.String())
-
-	if strings.Contains(outputStr, "Everything is up to date") ||
-		strings.Contains(outputStr, "Scoop is up to date and no installed packages have updates available") {
-		return []pm.PackageUpdate{}, nil
-	}
 
 	updates, parseErr := parseScoopOutput(outputStr)
 	if parseErr != nil {
@@ -118,6 +171,11 @@ func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	}
 
 	return updates, nil
+}
+
+// GetAvailableUpdates is a package-level helper for convenience.
+func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	return NewScoopManager().GetAvailableUpdates(ctx)
 }
 
 // indexRunes returns the rune index of sub within runes, or -1 if not found.
@@ -206,7 +264,7 @@ func parseScoopOutput(output string) ([]pm.PackageUpdate, error) {
 					latest = strings.TrimSpace(string(runes[latestIdx:]))
 				}
 
-				if name != "" && !strings.HasPrefix(name, "-") && !strings.Contains(name, " ") {
+				if name != "" && !strings.HasPrefix(name, "-") && !strings.Contains(name, " ") && pm.ValidateScoopID(name) == nil {
 					updates = append(updates, pm.PackageUpdate{
 						Name:             name,
 						Id:               name,
@@ -226,7 +284,7 @@ func parseScoopOutput(output string) ([]pm.PackageUpdate, error) {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		matches := lineRegex.FindStringSubmatch(trimmed)
-		if len(matches) == 4 {
+		if len(matches) == 4 && pm.ValidateScoopID(matches[1]) == nil {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             matches[1],
 				Id:               matches[1],

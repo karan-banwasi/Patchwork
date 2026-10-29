@@ -28,6 +28,9 @@ func TestConfig_PinUnpinLoadSave(t *testing.T) {
 	if !cfg.Pin("Git.Git") {
 		t.Errorf("expected Pin to return true for Git.Git")
 	}
+	if !cfg.Pin("winget:Docker.DockerDesktop") {
+		t.Errorf("expected Pin to return true for scoped pin winget:Docker.DockerDesktop")
+	}
 
 	if err := cfg.SaveTo(tmpFile); err != nil {
 		t.Fatalf("failed to save config: %v", err)
@@ -40,8 +43,17 @@ func TestConfig_PinUnpinLoadSave(t *testing.T) {
 	if !loaded.IsPinned("git.git", "") {
 		t.Errorf("expected git.git to be pinned")
 	}
-	if !loaded.IsPinned("other-id", "Microsoft.VisualStudioCode") {
-		t.Errorf("expected match by name to be pinned")
+	if !loaded.IsPinnedForManager("winget", "Docker.DockerDesktop", "Docker Desktop") {
+		t.Errorf("expected winget:Docker.DockerDesktop to match winget manager")
+	}
+	if loaded.IsPinnedForManager("scoop", "Docker.DockerDesktop", "Docker Desktop") {
+		t.Errorf("expected winget:Docker.DockerDesktop NOT to match scoop manager")
+	}
+
+	// Name collision across managers: pinning "git" (ID) should not pin winget's "Git.Git" whose display Name is "Git"
+	loaded.Pin("git")
+	if loaded.IsPinnedForManager("winget", "Git.Git_Other", "Git") {
+		t.Errorf("expected unscoped pin 'git' to match on ID only, not display Name")
 	}
 
 	if !loaded.Unpin("GIT.GIT") {
@@ -50,13 +62,16 @@ func TestConfig_PinUnpinLoadSave(t *testing.T) {
 	if loaded.IsPinned("Git.Git", "") {
 		t.Errorf("expected Git.Git to be unpinned")
 	}
+	if !loaded.Unpin("WINGET:docker.dockerdesktop") {
+		t.Errorf("expected Unpin to return true for scoped pin")
+	}
 	if loaded.Unpin("NonExistent") {
 		t.Errorf("expected Unpin to return false for nonexistent package")
 	}
 }
 
 func TestConfig_UpdateCacheSaveLoad(t *testing.T) {
-	tmpCache := filepath.Join(t.TempDir(), "cache.json")
+	tmpCache := filepath.Join(t.TempDir(), "sub", "cache.json")
 	t.Setenv("PATCHWORK_CACHE", tmpCache)
 
 	if _, ok := LoadUpdateCache(5 * time.Minute); ok {

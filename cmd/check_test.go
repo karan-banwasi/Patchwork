@@ -6,14 +6,9 @@ import (
 )
 
 func TestCheckCmd_UnknownManager(t *testing.T) {
-	checkManager = ""
-	byManager = false
-	defer func() {
-		checkManager = ""
-		byManager = false
-	}()
-	rootCmd.SetArgs([]string{"check", "-m", "unknown-mgr"})
-	err := rootCmd.Execute()
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"check", "-m", "unknown-mgr"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error for unknown manager, got nil")
 	}
@@ -34,4 +29,3 @@ func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 		}
 	}
 }
-

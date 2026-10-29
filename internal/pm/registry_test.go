@@ -3,25 +3,41 @@ package pm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 type mockManager struct {
 	name      string
+	aliases   []string
 	available bool
 	updates   []PackageUpdate
 	err       error
+	block     bool
 }
 
-func (m *mockManager) Name() string { return m.name }
+func (m *mockManager) Name() string      { return m.name }
+func (m *mockManager) Aliases() []string { return m.aliases }
 func (m *mockManager) IsAvailable(ctx context.Context) bool {
 	return m.available
 }
 func (m *mockManager) GetAvailableUpdates(ctx context.Context) ([]PackageUpdate, error) {
+	if m.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return m.updates, m.err
 }
-func (m *mockManager) UpgradePackage(ctx context.Context, id string) error { return m.err }
-func (m *mockManager) UpgradeAll(ctx context.Context) error                 { return m.err }
+func (m *mockManager) UpgradePackage(ctx context.Context, id string) error {
+	if err := m.ValidateID(id); err != nil {
+		return err
+	}
+	return m.err
+}
+func (m *mockManager) ValidateID(id string) error {
+	return ValidateGenericID(id)
+}
 
 func TestRegistry_ActiveManagers(t *testing.T) {
 	m1 := &mockManager{name: "winget", available: true}
@@ -73,7 +89,7 @@ func TestRegistry_FetchAllUpdates(t *testing.T) {
 func TestRegistry_GetManager(t *testing.T) {
 	m1 := &mockManager{name: "winget", available: true}
 	m2 := &mockManager{name: "scoop", available: true}
-	m3 := &mockManager{name: "choco", available: true}
+	m3 := &mockManager{name: "choco", aliases: []string{"chocolatey"}, available: true}
 
 	reg := NewRegistry(m1, m2, m3)
 
@@ -129,12 +145,50 @@ func TestRegistry_FetchAllUpdates_PartialFailureWithZeroUpdates(t *testing.T) {
 	}
 
 	reg := NewRegistry(m1, m2)
-	updates, err := reg.FetchAllUpdates(context.Background())
+	updates, warnings, err := reg.FetchAllUpdatesWithWarnings(context.Background())
 	if err != nil {
 		t.Fatalf("expected no error when at least one manager succeeds, got: %v", err)
 	}
 	if len(updates) != 0 {
 		t.Fatalf("expected 0 updates, got %d", len(updates))
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "elevation required") {
+		t.Errorf("expected 1 warning containing 'elevation required', got %v", warnings)
+	}
+}
+
+func TestRegistry_FetchAllUpdates_Timeout(t *testing.T) {
+	fast := &mockManager{
+		name:      "winget",
+		available: true,
+		updates: []PackageUpdate{
+			{Name: "Git", Id: "Git.Git", Version: "2.40.0", AvailableVersion: "2.41.0", ManagerName: "winget"},
+		},
+	}
+	hung := &mockManager{
+		name:      "psresource",
+		available: true,
+		block:     true,
+	}
+
+	reg := NewRegistry(fast, hung)
+	reg.FetchTimeout = 50 * time.Millisecond
+
+	start := time.Now()
+	updates, warnings, err := reg.FetchAllUpdatesWithWarnings(context.Background())
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected partial success when one manager times out, got error: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("expected timeout around 50ms, took %v", elapsed)
+	}
+	if len(updates) != 1 || updates[0].Id != "Git.Git" {
+		t.Errorf("expected Git.Git update from non-hung manager, got: %+v", updates)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "timed out") {
+		t.Errorf("expected timeout warning for psresource, got: %v", warnings)
 	}
 }
 
@@ -159,4 +213,92 @@ func TestRegistry_FetchAllUpdates_Deduplication(t *testing.T) {
 	}
 }
 
+func TestValidateID_PerManager(t *testing.T) {
+	maliciousPayloads := []string{
+		"",
+		"-f",
+		"--git=https://attacker/repo",
+		"--source=https://evil.example/feed",
+		"Microsoft.PowerShell&calc",
+		"pkg|calc",
+		"pkg;calc",
+		"pkg`calc`",
+		"pkg$(calc)",
+		"%PATH%",
+		"!VAR!",
+		"pkg with spaces",
+		"pkg\nnewline",
+		"pkg\rcarriage",
+		"pkg'quote",
+		"pkg‘curlyquote",
+		"pkg’curlyquote",
+		"pkg\"doublequote",
+		"../traversal",
+	}
 
+	validators := map[string]func(string) error{
+		"winget":     ValidateWingetID,
+		"scoop":      ValidateScoopID,
+		"choco":      ValidateChocoID,
+		"npm":        ValidateNpmID,
+		"cargo":      ValidateCargoID,
+		"uv":         ValidateUvID,
+		"dotnet":     ValidateDotnetID,
+		"psresource": ValidatePSResourceID,
+		"generic":    ValidateGenericID,
+	}
+
+	for mgrName, fn := range validators {
+		for _, bad := range maliciousPayloads {
+			if err := fn(bad); err == nil {
+				t.Errorf("%s validator accepted malicious payload %q", mgrName, bad)
+			}
+		}
+	}
+
+	validCases := []struct {
+		mgr string
+		id  string
+	}{
+		{"winget", "Git.Git"},
+		{"winget", "Microsoft.PowerShell"},
+		{"winget", "Notepad++.Notepad++"},
+		{"winget", "7zip.7zip"},
+		{"scoop", "git"},
+		{"scoop", "extras/vscode"},
+		{"scoop", "main/7zip"},
+		{"choco", "git.install"},
+		{"choco", "nodejs-lts"},
+		{"npm", "typescript"},
+		{"npm", "@angular/cli"},
+		{"npm", "@types/node"},
+		{"cargo", "ripgrep"},
+		{"cargo", "cargo-update"},
+		{"uv", "ruff"},
+		{"uv", "yt-dlp"},
+		{"dotnet", "dotnet-ef"},
+		{"dotnet", "Microsoft.DotNet.Watcher.Tool"},
+		{"psresource", "PSReadLine"},
+		{"psresource", "Microsoft.PowerShell.PSResourceGet"},
+	}
+
+	for _, tc := range validCases {
+		if err := validators[tc.mgr](tc.id); err != nil {
+			t.Errorf("%s validator rejected valid package ID %q: %v", tc.mgr, tc.id, err)
+		}
+	}
+}
+
+func TestQuoteWindowsArg(t *testing.T) {
+	got := QuoteWindowsArg(`C:\Path With Spaces\backslash\`)
+	want := `"C:\Path With Spaces\backslash\\"`
+	if got != want {
+		t.Errorf("QuoteWindowsArg got %s, want %s", got, want)
+	}
+
+	gotQuote := QuoteWindowsArg(`arg\"with"quotes`)
+	wantQuote := `"arg\\\"with\"quotes"`
+	if gotQuote != wantQuote {
+		t.Errorf("QuoteWindowsArg got %s, want %s", gotQuote, wantQuote)
+	}
+}

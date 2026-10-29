@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
     paths-ignore:
       - '**.md'
   pull_request:
@@ -12,43 +14,88 @@ on:
     paths-ignore:
       - '**.md'
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.1.0
         with:
           go-version-file: 'go.mod'
+          check-latest: true
+          
+      - name: Check Formatting (gofmt)
+        run: |
+          UNFORMATTED=$(gofmt -s -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files require gofmt -s -w:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: Verify no stdout/stderr leaks in internal/
+        run: |
+          LEAKS=$(grep -rnE 'fmt\.Print|os\.Stdout|os\.Stderr' internal/ | grep -v '_test\.go:' || true)
+          if [ -n "$LEAKS" ]; then
+            echo "Found direct stdout/stderr references in internal/:"
+            echo "$LEAKS"
+            exit 1
+          fi
           
       - name: Run go vet
         run: go vet ./...
         
       - name: Run go test
-        run: go test ./...
+        run: go test -v ./...
+
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   release:
     needs: test
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'workflow_dispatch') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      BUMP_TYPE: ${{ github.event.inputs.bump || 'patch' }}
       
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.1.0
         with:
           go-version-file: 'go.mod'
+          check-latest: true
 
       - name: Build and Create Release
         env:
@@ -57,28 +104,46 @@ jobs:
         run: |
           # Ensure all remote tags are fetched
           git fetch --tags --force
-          
-          # Get the latest tag safely without failing under set -e
-          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="v0.0.0"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            NEW_TAG="${GITHUB_REF#refs/tags/}"
+            NEW_VERSION="${NEW_TAG#v}"
+          else
+            # Get the latest tag safely without failing under set -e
+            LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG="v0.0.0"
+            fi
+            
+            # Parse version components
+            VERSION=${LATEST_TAG#v}
+            IFS='.' read -ra PARTS <<< "$VERSION"
+            MAJOR="${PARTS[0]:-0}"
+            MINOR="${PARTS[1]:-0}"
+            PATCH="${PARTS[2]:-0}"
+            
+            case "$BUMP_TYPE" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              *)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+            NEW_TAG="v$NEW_VERSION"
           fi
           
-          # Parse and increment the patch version
-          VERSION=${LATEST_TAG#v}
-          IFS='.' read -ra PARTS <<< "$VERSION"
-          MAJOR="${PARTS[0]:-0}"
-          MINOR="${PARTS[1]:-0}"
-          PATCH="${PARTS[2]:-0}"
+          echo "Release tag: $NEW_TAG"
           
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-          NEW_TAG="v$NEW_VERSION"
-          
-          echo "Previous tag: $LATEST_TAG"
-          echo "New tag: $NEW_TAG"
-          
-          # Regenerate Windows resource (.syso) files stamped with the exact release version
+          # Generate Windows resource (.syso) files stamped with the exact release version
           go run github.com/tc-hib/go-winres make --arch amd64,arm64,386 --product-version "$NEW_VERSION" --file-version "$NEW_VERSION"
           
           # Cross-compile for Windows natively (amd64 and arm64) from Ubuntu
@@ -120,12 +185,17 @@ jobs:
             KaranBanwasi.Patchwork.installer.yaml \
             --title "Release $NEW_TAG" --generate-notes
 
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.2.0
+        with:
+          subject-path: |
+            pw.exe
+            pw-arm64.exe
+
       - name: Publish to winget-pkgs
         if: env.WINGET_TOKEN != ''
-        env:
-          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-        uses: vedantmgoyal9/winget-releaser@main
+        uses: vedantmgoyal9/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # main
         with:
           identifier: KaranBanwasi.Patchwork
           installers-regex: 'pw(-arm64)?\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
+          token: ${{ env.WINGET_TOKEN }}

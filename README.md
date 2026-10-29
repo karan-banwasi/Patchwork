@@ -87,6 +87,16 @@ pw check -m dotnet
 pw check --include-pinned
 ```
 
+**Skip repository/bucket network refresh before checking (offline mode):**
+```powershell
+pw check --no-refresh
+```
+
+**Set a custom per-manager query timeout:**
+```powershell
+pw check --timeout 1m
+```
+
 **Machine-readable output (for status bars, prompts, and scripts):**
 ```powershell
 # Structured JSON array of pending updates
@@ -149,6 +159,20 @@ pw upgrade Microsoft.PowerShell --dry-run
 pw upgrade --dry-run
 ```
 
+**Upgrade pinned packages or customize agreement prompts:**
+```powershell
+# Upgrade packages even if pinned in your configuration:
+pw upgrade Git.Git --force
+# or
+pw upgrade --all --include-pinned
+
+# Disable automatic acceptance of Winget source/package agreements:
+pw upgrade --all --accept-agreements=false
+
+# Pass -TrustRepository when upgrading untrusted PowerShell PSResource feeds:
+pw upgrade PSReadLine --trust-repository
+```
+
 ---
 
 ### 3. Pinning / Ignoring Packages (`pw pin`, `pw unpin`, `pw pinned`)
@@ -156,9 +180,13 @@ pw upgrade --dry-run
 If a package has a broken installer or you want to hold back its version, pin it so Patchwork skips it during `pw check` and `pw upgrade`:
 
 ```powershell
-# Pin one or more packages by ID or Name (supports Tab completion)
+# Pin one or more packages by ID (supports Tab completion)
 pw pin Microsoft.VisualStudioCode
 pw pin Git.Git nodejs
+
+# Pin a package scoped to a specific package manager only:
+pw pin winget:Git.Git
+pw pin scoop:git
 
 # List all currently pinned packages
 pw pinned

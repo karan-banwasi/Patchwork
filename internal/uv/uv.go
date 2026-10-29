@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -18,14 +18,74 @@ import (
 )
 
 // UvManager implements the pm.Manager interface for Python CLI tools managed by `uv tool`.
-type UvManager struct{}
+type UvManager struct {
+	runner pm.Runner
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
 
 func NewUvManager() *UvManager {
-	return &UvManager{}
+	return &UvManager{
+		runner: pm.ExecRunner{},
+		stdout: io.Discard,
+		stderr: io.Discard,
+	}
 }
 
 func (u *UvManager) Name() string {
 	return "uv"
+}
+
+func (u *UvManager) Aliases() []string {
+	return []string{"uv-tool"}
+}
+
+func (u *UvManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
+	u.stdin = stdin
+	if stdout != nil {
+		u.stdout = stdout
+	} else {
+		u.stdout = io.Discard
+	}
+	if stderr != nil {
+		u.stderr = stderr
+	} else {
+		u.stderr = io.Discard
+	}
+}
+
+func (u *UvManager) ValidateID(id string) error {
+	return pm.ValidateUvID(id)
+}
+
+func (u *UvManager) Path() (string, error) {
+	return uvPath()
+}
+
+func (u *UvManager) Version(ctx context.Context) (string, error) {
+	exe, err := uvPath()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.CommandContext(ctx, exe, "--version").Output()
+	if err != nil {
+		return "unknown", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "uv "), nil
+}
+
+func (u *UvManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Writer) error {
+	exe, err := uvPath()
+	if err != nil {
+		return nil
+	}
+	fmt.Fprintln(out, "--- Pruning uv cache ---")
+	runner := u.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	return runner.Run(ctx, exe, []string{"cache", "prune"}, nil, out, errOut)
 }
 
 func (u *UvManager) IsAvailable(ctx context.Context) bool {
@@ -53,7 +113,7 @@ func parseUvToolList(output string) []pm.PackageUpdate {
 			continue
 		}
 		m := uvToolLineRegex.FindStringSubmatch(trimmed)
-		if len(m) == 3 {
+		if len(m) == 3 && pm.ValidateUvID(m[1]) == nil {
 			tools = append(tools, pm.PackageUpdate{
 				Name:        m[1],
 				Id:          m[1],
@@ -100,10 +160,13 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "tool", "list")
+	runner := u.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	if err := runner.Run(ctx, exe, []string{"tool", "list"}, nil, &stdout, io.Discard); err != nil {
 		return []pm.PackageUpdate{}, nil
 	}
 
@@ -145,29 +208,27 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 }
 
 func (u *UvManager) UpgradePackage(ctx context.Context, id string) error {
+	if err := u.ValidateID(id); err != nil {
+		return err
+	}
 	exe, err := uvPath()
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "tool", "upgrade", id)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	runner := u.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	stdout := u.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := u.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	if err := runner.Run(ctx, exe, []string{"tool", "upgrade", id}, u.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("uv tool upgrade failed for %s: %w", id, err)
-	}
-	return nil
-}
-
-func (u *UvManager) UpgradeAll(ctx context.Context) error {
-	updates, err := u.GetAvailableUpdates(ctx)
-	if err != nil {
-		return err
-	}
-	for _, tool := range updates {
-		if err := u.UpgradePackage(ctx, tool.Id); err != nil {
-			return err
-		}
 	}
 	return nil
 }
