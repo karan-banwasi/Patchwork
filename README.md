@@ -106,4 +106,11 @@ pw --version
 - [ ] Publish official `Patchwork` package to Windows Package Manager repository (`microsoft/winget-pkgs`) for native `winget install Patchwork` support.
 - [x] Expand package manager support beyond Winget (Scoop, Chocolatey).
 - [x] Group pending updates by package manager (`--by-manager`).
+- [ ] **Package Pinning / Ignore List**: Add `pw pin <id>`, `pw unpin <id>`, and `pw pinned` to hide or skip excluded packages during `pw check` and `pw upgrade`.
+- [ ] **Self-Update Subcommand (`pw self-update`)**: Upgrade `pw.exe` in-place directly from GitHub Releases without re-running `install.ps1`.
+- [ ] **Auto-Elevation (UAC) Prompt**: Offer automatic UAC elevation when upgrading Chocolatey or administrator-scoped packages from a non-elevated shell.
+- [ ] **Machine-Readable Output (`--json` / `--quiet`)**: Support structured JSON output on `pw check` for status bars (Oh My Posh, Yasb, GlazeWM) and scripts.
+- [ ] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview planned upgrades and display a final status table (`Succeeded`, `Failed`, `Skipped`) after bulk runs.
+- [ ] **Shell Completions (`pw completion powershell`)**: Dynamic tab completion for subcommands, manager names (`-m`), and available package IDs.
+- [ ] **Additional Global Tool Managers**: Extend `pm.Manager` to support PowerShell Modules (`PSResourceGet`), `npm` global packages, `uv` / `pipx` tools, `cargo`, and `dotnet tool`.
 

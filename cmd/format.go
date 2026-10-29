@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
@@ -22,17 +23,17 @@ func getDefaultPackageColumnWidths(updates []pm.PackageUpdate) (int, int, int, i
 func getPackageColumnWidths(updates []pm.PackageUpdate, minName, minId, minVer, minAvail int) (int, int, int, int) {
 	var maxNameLen, maxIdLen, maxVersionLen, maxAvailLen int
 	for _, pkg := range updates {
-		if len(pkg.Name) > maxNameLen {
-			maxNameLen = len(pkg.Name)
+		if n := utf8.RuneCountInString(pkg.Name); n > maxNameLen {
+			maxNameLen = n
 		}
-		if len(pkg.Id) > maxIdLen {
-			maxIdLen = len(pkg.Id)
+		if n := utf8.RuneCountInString(pkg.Id); n > maxIdLen {
+			maxIdLen = n
 		}
-		if len(pkg.Version) > maxVersionLen {
-			maxVersionLen = len(pkg.Version)
+		if n := utf8.RuneCountInString(pkg.Version); n > maxVersionLen {
+			maxVersionLen = n
 		}
-		if len(pkg.AvailableVersion) > maxAvailLen {
-			maxAvailLen = len(pkg.AvailableVersion)
+		if n := utf8.RuneCountInString(pkg.AvailableVersion); n > maxAvailLen {
+			maxAvailLen = n
 		}
 	}
 

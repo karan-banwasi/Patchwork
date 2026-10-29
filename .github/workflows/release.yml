@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -25,6 +33,7 @@ jobs:
 
   release:
     needs: test
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -63,10 +72,14 @@ jobs:
           PATCH="${PARTS[2]:-0}"
           
           NEW_PATCH=$((PATCH + 1))
-          NEW_TAG="v$MAJOR.$MINOR.$NEW_PATCH"
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          NEW_TAG="v$NEW_VERSION"
           
           echo "Previous tag: $LATEST_TAG"
           echo "New tag: $NEW_TAG"
+          
+          # Regenerate Windows resource (.syso) files stamped with the exact release version
+          go run github.com/tc-hib/go-winres make --arch amd64,arm64,386 --product-version "$NEW_VERSION" --file-version "$NEW_VERSION"
           
           # Cross-compile for Windows natively (amd64 and arm64) from Ubuntu
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe .

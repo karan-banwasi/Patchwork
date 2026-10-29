@@ -84,40 +84,28 @@ var upgradeCmd = &cobra.Command{
 				return nil
 			}
 
-			fmt.Printf("Upgrading package: %s...\n", packageId)
+			fmt.Printf("Locating package %s across package managers...\n", packageId)
 
-			// Try to determine the owning manager from available updates to avoid spurious errors from other managers
-			if updates, err := registry.FetchAllUpdates(cmd.Context()); err == nil {
-				for _, u := range updates {
-					if strings.EqualFold(u.Id, packageId) || strings.EqualFold(u.Name, packageId) {
-						if mgr, ok := registry.GetManager(u.ManagerName); ok {
-							err := mgr.UpgradePackage(cmd.Context(), u.Id)
-							if err != nil {
-								return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, mgr.Name(), err)
-							}
-							fmt.Printf("Successfully upgraded package: %s\n", packageId)
-							return nil
+			updates, err := registry.FetchAllUpdates(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("failed to check available updates for package %s: %w", packageId, err)
+			}
+
+			for _, u := range updates {
+				if strings.EqualFold(u.Id, packageId) || strings.EqualFold(u.Name, packageId) {
+					if mgr, ok := registry.GetManager(u.ManagerName); ok {
+						fmt.Printf("Upgrading package: %s using %s...\n", u.Id, mgr.Name())
+						err := mgr.UpgradePackage(cmd.Context(), u.Id)
+						if err != nil {
+							return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, mgr.Name(), err)
 						}
+						fmt.Printf("Successfully upgraded package: %s\n", u.Id)
+						return nil
 					}
 				}
 			}
 
-			// Fallback: iterate through active managers
-			var upgraded bool
-			var lastErr error
-			for _, m := range registry.ActiveManagers(cmd.Context()) {
-				err := m.UpgradePackage(cmd.Context(), packageId)
-				if err == nil {
-					upgraded = true
-					fmt.Printf("Successfully upgraded package: %s\n", packageId)
-					break
-				}
-				lastErr = err
-			}
-			if !upgraded {
-				return fmt.Errorf("failed to upgrade package %s: %v", packageId, lastErr)
-			}
-			return nil
+			return fmt.Errorf("no pending update found for package %q across active package managers (use -m <manager> to force an upgrade with a specific manager)", packageId)
 		}
 
 		// Interactive selection mode

@@ -106,3 +106,21 @@ Updates are available for:
 		t.Errorf("unexpected package 0 parse: %+v", updates[0])
 	}
 }
+
+func TestParseScoopOutput_UTF8HeaderPrefix(t *testing.T) {
+	// Multi-byte rune before header columns ensures rune-based offset matching works properly
+	sampleOutput := "• Name      Installed Version Latest Version Info\n" +
+		"  ----      ----------------- -------------- ----\n" +
+		"  ripgrep   13.0.0            14.1.0         Held package\n"
+
+	updates, err := parseScoopOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+	if updates[0].Name != "ripgrep" || updates[0].Version != "13.0.0" || updates[0].AvailableVersion != "14.1.0" {
+		t.Errorf("unexpected package parse with UTF-8 prefix: %+v", updates[0])
+	}
+}

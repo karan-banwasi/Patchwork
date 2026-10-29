@@ -30,6 +30,13 @@ Patchwork is a Windows CLI utility designed to iterate through packages that hav
 
 ## Future Roadmap
 - Publish `Patchwork` package manifest to `microsoft/winget-pkgs` for native `winget install Patchwork` support.
-- Expand support beyond Winget (Scoop, Chocolatey).
-- Add functionality to group updates by package manager (`--by-manager`).
+- [x] Expand support beyond Winget (Scoop, Chocolatey).
+- [x] Add functionality to group updates by package manager (`--by-manager`).
+- [ ] **Package Pinning / Ignore List**: Add `pw pin <id>`, `pw unpin <id>`, and `pw pinned` to skip excluded packages during `pw check` and `pw upgrade`.
+- [ ] **Self-Update Subcommand (`pw self-update`)**: In-place binary update via GitHub Releases API.
+- [ ] **Auto-Elevation (UAC) Prompt**: Prompt and spawn elevated execution (`runas`) when Chocolatey or system-scoped installers require Administrator privileges.
+- [ ] **Machine-Readable Output (`--json` / `--quiet`)**: Structured output on `pw check` for terminal prompt segments and status bars.
+- [ ] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview upgrade queues and print a final summary table (`Succeeded`, `Failed`, `Skipped`) after batch upgrades.
+- [ ] **Shell Completions (`pw completion powershell`)**: Register `ValidArgsFunction` for tab-completing pending package IDs and manager names.
+- [ ] **Additional Global Tool Managers**: Add `internal/<manager>` implementations for `PSResourceGet`, `npm -g`, `uv tool` / `pipx`, `cargo`, and `dotnet tool`.
 

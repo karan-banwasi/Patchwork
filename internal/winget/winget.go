@@ -260,7 +260,8 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 
 		// Ignore non-package lines that might get caught at the bottom
 		// Winget package IDs do not contain spaces
-		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") {
+		// Also skip packages with "Unknown" installed version which cannot be cleanly upgraded
+		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") && !strings.EqualFold(version, "Unknown") {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             name,
 				Id:               id,

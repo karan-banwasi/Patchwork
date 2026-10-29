@@ -18,15 +18,26 @@ import (
 // sessions during InstallValidate, winget.exe is not terminated and any installer errors
 // remain visible to the user.
 func runIsolatedUpgrade(ctx context.Context, exe string, id string, args []string) error {
-	tempDir := os.TempDir()
-	scriptPath := filepath.Join(tempDir, "patchwork-isolated-upgrade.cmd")
-	statusPath := filepath.Join(tempDir, "patchwork-isolated-upgrade.status")
+	scriptFile, err := os.CreateTemp("", "patchwork-isolated-upgrade-*.cmd")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary upgrade script: %w", err)
+	}
+	scriptPath := scriptFile.Name()
+	_ = scriptFile.Close()
 
+	statusFile, err := os.CreateTemp("", "patchwork-isolated-upgrade-*.status")
+	if err != nil {
+		_ = os.Remove(scriptPath)
+		return fmt.Errorf("failed to create temporary status file: %w", err)
+	}
+	statusPath := statusFile.Name()
+	_ = statusFile.Close()
 	_ = os.Remove(statusPath)
 
 	scriptContent := buildIsolatedUpgradeScript(exe, id, args, statusPath)
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0600); err != nil {
-		return fmt.Errorf("failed to create temporary upgrade script: %w", err)
+		_ = os.Remove(scriptPath)
+		return fmt.Errorf("failed to write temporary upgrade script: %w", err)
 	}
 	defer func() {
 		_ = os.Remove(scriptPath)

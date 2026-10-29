@@ -84,6 +84,10 @@ func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 		return nil, err
 	}
 
+	// Refresh local Scoop buckets so `scoop status` compares against upstream manifests.
+	// Ignore errors here in case the machine is temporarily offline or a single bucket fails.
+	_ = exec.CommandContext(ctx, exe, "update").Run()
+
 	cmd := exec.CommandContext(ctx, exe, "status")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -116,6 +120,27 @@ func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
 	return updates, nil
 }
 
+// indexRunes returns the rune index of sub within runes, or -1 if not found.
+func indexRunes(runes []rune, sub string) int {
+	subRunes := []rune(sub)
+	if len(subRunes) == 0 {
+		return 0
+	}
+	for i := 0; i <= len(runes)-len(subRunes); i++ {
+		match := true
+		for j := 0; j < len(subRunes); j++ {
+			if runes[i+j] != subRunes[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
 // parseScoopOutput parses the output from `scoop status`.
 func parseScoopOutput(output string) ([]pm.PackageUpdate, error) {
 	var updates []pm.PackageUpdate
@@ -133,22 +158,21 @@ func parseScoopOutput(output string) ([]pm.PackageUpdate, error) {
 
 	// Tabular parsing mode
 	if headerIdx != -1 {
-		headerLine := lines[headerIdx]
-		nameIdx := strings.Index(headerLine, "Name")
-		instIdx := strings.Index(headerLine, "Installed")
+		headerRunes := []rune(lines[headerIdx])
+		nameIdx := indexRunes(headerRunes, "Name")
+		instIdx := indexRunes(headerRunes, "Installed")
 		if instIdx == -1 {
-			instIdx = strings.Index(headerLine, "Version")
+			instIdx = indexRunes(headerRunes, "Version")
 		}
-		latestIdx := strings.Index(headerLine, "Latest")
+		latestIdx := indexRunes(headerRunes, "Latest")
 
 		if nameIdx != -1 && instIdx != -1 && latestIdx != -1 && nameIdx < instIdx && instIdx < latestIdx {
 			// Find optional 4th column (e.g., Missing dependencies or Bucket)
 			missingIdx := -1
-			for _, colName := range []string{"Missing", "Dependencies", "Bucket"} {
-				idx := strings.Index(headerLine, colName)
-				if idx > latestIdx {
+			for _, colName := range []string{"Missing", "Dependencies", "Bucket", "Info"} {
+				idx := indexRunes(headerRunes, colName)
+				if idx > latestIdx && (missingIdx == -1 || idx < missingIdx) {
 					missingIdx = idx
-					break
 				}
 			}
 

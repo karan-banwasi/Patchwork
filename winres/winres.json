@@ -10,11 +10,11 @@
     "#1": {
       "0409": {
         "identity": {
-          "name": "",
-          "version": ""
+          "name": "Patchwork",
+          "version": "1.0.0.0"
         },
-        "description": "",
-        "minimum-os": "win7",
+        "description": "Patchwork CLI Package Update Manager",
+        "minimum-os": "win10",
         "execution-level": "as invoker",
         "ui-access": false,
         "auto-elevate": false,
@@ -23,7 +23,7 @@
         "disable-window-filtering": false,
         "high-resolution-scrolling-aware": false,
         "ultra-high-resolution-scrolling-aware": false,
-        "long-path-aware": false,
+        "long-path-aware": true,
         "printer-driver-isolation": false,
         "gdi-scaling": false,
         "segment-heap": false,
@@ -35,22 +35,22 @@
     "#1": {
       "0000": {
         "fixed": {
-          "file_version": "0.0.0.0",
-          "product_version": "0.0.0.0"
+          "file_version": "1.0.0.0",
+          "product_version": "1.0.0.0"
         },
         "info": {
           "0409": {
-            "Comments": "",
-            "CompanyName": "",
-            "FileDescription": "",
-            "FileVersion": "",
-            "InternalName": "",
-            "LegalCopyright": "",
+            "Comments": "CLI utility to check and manage package updates across Winget, Scoop, and Chocolatey",
+            "CompanyName": "Karan Banwasi",
+            "FileDescription": "Patchwork CLI Package Update Manager",
+            "FileVersion": "1.0.0.0",
+            "InternalName": "pw",
+            "LegalCopyright": "Copyright (c) Karan Banwasi",
             "LegalTrademarks": "",
-            "OriginalFilename": "",
+            "OriginalFilename": "pw.exe",
             "PrivateBuild": "",
-            "ProductName": "",
-            "ProductVersion": "",
+            "ProductName": "Patchwork",
+            "ProductVersion": "1.0.0.0",
             "SpecialBuild": ""
           }
         }

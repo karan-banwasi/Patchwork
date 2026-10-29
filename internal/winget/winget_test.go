@@ -162,6 +162,26 @@ func TestParseWingetOutput_UppercaseID(t *testing.T) {
 	}
 }
 
+func TestParseWingetOutput_FiltersUnknownVersion(t *testing.T) {
+	sampleOutput := "Name                                      Id                                     Version       Available     Source\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"Some Legacy App                           Vendor.LegacyApp                       Unknown       2.0.0         winget\n" +
+		"Git                                       Git.Git                                2.55.0.2      2.55.0.3      winget\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update after filtering Unknown version, got %d", len(updates))
+	}
+
+	if updates[0].Id != "Git.Git" {
+		t.Errorf("expected Git.Git, got %q", updates[0].Id)
+	}
+}
+
 func TestShouldOmitSilent(t *testing.T) {
 	tests := []struct {
 		id       string

@@ -89,3 +89,20 @@ func TestFormatUpdateRow(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, formatted)
 	}
 }
+
+func TestGetPackageColumnWidths_UTF8(t *testing.T) {
+	updates := []pm.PackageUpdate{
+		{
+			Name:             "7-Zip® Archiver", // 15 runes, 16 bytes
+			Id:               "7zip.7zip",
+			Version:          "23.01",
+			AvailableVersion: "24.05",
+			ManagerName:      "winget",
+		},
+	}
+
+	nameLen, _, _, _ := getPackageColumnWidths(updates, 10, 10, 5, 9)
+	if nameLen != 15 {
+		t.Errorf("expected rune count nameLen=15 for UTF-8 string, got %d", nameLen)
+	}
+}

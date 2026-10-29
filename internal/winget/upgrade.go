@@ -132,17 +132,45 @@ func UpgradePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpgradeAll upgrades all available packages.
+// UpgradeAll upgrades all available packages, deferring self-updating shell or terminal
+// packages so they run last in an isolated console window.
 func UpgradeAll(ctx context.Context) error {
-	exe, err := wingetPath()
+	updates, err := GetAvailableUpdates(ctx)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "upgrade", "--all", "--silent", "--accept-source-agreements", "--accept-package-agreements")
+	if len(updates) == 0 {
+		fmt.Println("No applicable winget updates found.")
+		return nil
+	}
 
-	// Stream the output directly to the CLI
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var regular, deferred []string
+	for _, u := range updates {
+		if shouldOmitSilent(u.Id) {
+			deferred = append(deferred, u.Id)
+		} else {
+			regular = append(regular, u.Id)
+		}
+	}
 
-	return cmd.Run()
+	var hadErr bool
+	for _, id := range regular {
+		fmt.Printf("\n--- Upgrading: %s (winget) ---\n", id)
+		if err := UpgradePackage(ctx, id); err != nil {
+			fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", id, err)
+			hadErr = true
+		}
+	}
+	for _, id := range deferred {
+		fmt.Printf("\n--- Upgrading: %s (winget) ---\n", id)
+		if err := UpgradePackage(ctx, id); err != nil {
+			fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", id, err)
+			hadErr = true
+		}
+	}
+
+	if hadErr {
+		return fmt.Errorf("one or more winget package upgrades failed")
+	}
+	return nil
 }
