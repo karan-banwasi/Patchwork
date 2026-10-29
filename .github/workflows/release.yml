@@ -124,8 +124,48 @@ jobs:
         if: env.WINGET_TOKEN != ''
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-        uses: vedantmgoyal9/winget-releaser@main
-        with:
-          identifier: KaranBanwasi.Patchwork
-          installers-regex: 'pw(-arm64)?\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+          NEW_VERSION=${LATEST_TAG#v}
+          PKG_ID="KaranBanwasi.Patchwork"
+          
+          GH_USER=$(gh api user --jq .login)
+          git config --global user.name "$GH_USER"
+          git config --global user.email "$GH_USER@users.noreply.github.com"
+          
+          # Ensure fork exists
+          gh repo fork microsoft/winget-pkgs --clone=false || true
+          
+          mkdir -p /tmp/winget-pkgs
+          cd /tmp/winget-pkgs
+          
+          git clone --filter=blob:none --no-checkout --depth 1 "https://x-access-token:${WINGET_TOKEN}@github.com/${GH_USER}/winget-pkgs.git" .
+          git remote add upstream "https://github.com/microsoft/winget-pkgs.git"
+          git fetch upstream master --depth 1
+          
+          git sparse-checkout init --cone
+          git sparse-checkout set "manifests/k/KaranBanwasi/Patchwork"
+          git checkout -B "patchwork-${NEW_VERSION}" FETCH_HEAD
+          
+          if [ ! -d "manifests/k/KaranBanwasi/Patchwork" ]; then
+            echo "Initial package PR has not been merged into microsoft/winget-pkgs yet. Skipping automated version bump PR."
+            exit 0
+          fi
+          
+          DEST_DIR="manifests/k/KaranBanwasi/Patchwork/${NEW_VERSION}"
+          mkdir -p "$DEST_DIR"
+          cp "$GITHUB_WORKSPACE/KaranBanwasi.Patchwork.yaml" "$DEST_DIR/"
+          cp "$GITHUB_WORKSPACE/KaranBanwasi.Patchwork.locale.en-US.yaml" "$DEST_DIR/"
+          cp "$GITHUB_WORKSPACE/KaranBanwasi.Patchwork.installer.yaml" "$DEST_DIR/"
+          
+          git add "$DEST_DIR"
+          git commit -m "New version: ${PKG_ID} version ${NEW_VERSION}"
+          git push -u origin "patchwork-${NEW_VERSION}" --force
+          
+          gh pr create \
+            --repo microsoft/winget-pkgs \
+            --head "${GH_USER}:patchwork-${NEW_VERSION}" \
+            --base master \
+            --title "New version: ${PKG_ID} version ${NEW_VERSION}" \
+            --body "Automated release PR for ${PKG_ID} version ${NEW_VERSION}."
