@@ -24,7 +24,7 @@ func TestCheckCmd_UnknownManager(t *testing.T) {
 
 func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 	reg := getDefaultRegistry()
-	for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey"} {
+	for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust", "psresource", "powershell", "psresourceget"} {
 		mgr, exists := reg.GetManager(name)
 		if !exists {
 			t.Errorf("expected manager %q to be recognized", name)

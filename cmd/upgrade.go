@@ -73,9 +73,9 @@ func printUpgradeSummary(results []upgradeResult) {
 
 // upgradeCmd represents the upgrade command
 var upgradeCmd = &cobra.Command{
-	Use:               "upgrade [package-id]",
+	Use:               "upgrade [package-id...]",
 	Short:             "Upgrade available packages",
-	Long:              `Upgrade a specific package by providing its ID, or upgrade all packages using the --all flag.`,
+	Long:              `Upgrade one or more specific packages by providing their IDs, or upgrade all packages using the --all flag.`,
 	ValidArgsFunction: completeAvailablePackageIDs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if upgradeAll && len(args) > 0 {
@@ -145,54 +145,84 @@ var upgradeCmd = &cobra.Command{
 		}
 
 		if len(args) > 0 {
-			packageId := args[0]
 			if targetedMgr != nil {
-				pkg := pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: targetedMgr.Name()}
+				var pkgs []pm.PackageUpdate
+				for _, packageId := range args {
+					pkgs = append(pkgs, pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: targetedMgr.Name()})
+				}
+				ordered := orderSelectedPackages(pkgs)
 				if upgradeDryRun {
-					fmt.Printf("[Dry Run] Would upgrade package %s using %s.\n", packageId, targetedMgr.Name())
-					printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Dry-Run"}})
+					for _, pkg := range ordered {
+						fmt.Printf("[Dry Run] Would upgrade package %s using %s.\n", pkg.Id, targetedMgr.Name())
+					}
+					var results []upgradeResult
+					for _, pkg := range ordered {
+						results = append(results, upgradeResult{pkg: pkg, status: "Dry-Run"})
+					}
+					printUpgradeSummary(results)
 					return nil
 				}
-				fmt.Printf("Upgrading package: %s using %s...\n", packageId, targetedMgr.Name())
-				start := time.Now()
-				err := targetedMgr.UpgradePackage(cmd.Context(), packageId)
-				if err != nil {
-					printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Failed", duration: time.Since(start), err: err}})
-					return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, targetedMgr.Name(), err)
+				results, hadErr := executePackageUpgrades(cmd, registry, ordered)
+				printUpgradeSummary(results)
+				if hadErr {
+					return fmt.Errorf("one or more package upgrades failed")
 				}
-				printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Succeeded", duration: time.Since(start)}})
 				return nil
 			}
 
-			fmt.Printf("Locating package %s across package managers...\n", packageId)
+			fmt.Printf("Locating %d package(s) across package managers...\n", len(args))
 
 			updates, err := registry.FetchAllUpdates(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("failed to check available updates for package %s: %w", packageId, err)
+				return fmt.Errorf("failed to check available updates: %w", err)
 			}
 
-			for _, u := range updates {
-				if strings.EqualFold(u.Id, packageId) || strings.EqualFold(u.Name, packageId) {
-					if mgr, ok := registry.GetManager(u.ManagerName); ok {
-						if upgradeDryRun {
-							fmt.Printf("[Dry Run] Would upgrade package %s (%s -> %s) using %s.\n", u.Id, u.Version, u.AvailableVersion, mgr.Name())
-							printUpgradeSummary([]upgradeResult{{pkg: u, status: "Dry-Run"}})
-							return nil
-						}
-						fmt.Printf("Upgrading package: %s using %s...\n", u.Id, mgr.Name())
-						start := time.Now()
-						err := mgr.UpgradePackage(cmd.Context(), u.Id)
-						if err != nil {
-							printUpgradeSummary([]upgradeResult{{pkg: u, status: "Failed", duration: time.Since(start), err: err}})
-							return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, mgr.Name(), err)
-						}
-						printUpgradeSummary([]upgradeResult{{pkg: u, status: "Succeeded", duration: time.Since(start)}})
-						return nil
+			var matched []pm.PackageUpdate
+			var notFound []string
+			for _, packageId := range args {
+				found := false
+				for _, u := range updates {
+					if strings.EqualFold(u.Id, packageId) || strings.EqualFold(u.Name, packageId) {
+						matched = append(matched, u)
+						found = true
+						break
 					}
+				}
+				if !found {
+					notFound = append(notFound, packageId)
 				}
 			}
 
-			return fmt.Errorf("no pending update found for package %q across active package managers (use -m <manager> to force an upgrade with a specific manager)", packageId)
+			if len(matched) == 0 {
+				return fmt.Errorf("no pending update found for package %q across active package managers (use -m <manager> to force an upgrade with a specific manager)", strings.Join(notFound, ", "))
+			}
+
+			var results []upgradeResult
+			for _, nf := range notFound {
+				fmt.Fprintf(os.Stderr, "Warning: no pending update found for %q (skipping)\n", nf)
+				results = append(results, upgradeResult{
+					pkg:    pm.PackageUpdate{Name: nf, Id: nf, ManagerName: "unknown"},
+					status: "Skipped",
+				})
+			}
+
+			ordered := orderSelectedPackages(matched)
+			if upgradeDryRun {
+				for _, u := range ordered {
+					fmt.Printf("[Dry Run] Would upgrade package %s (%s -> %s) using %s.\n", u.Id, u.Version, u.AvailableVersion, u.ManagerName)
+					results = append(results, upgradeResult{pkg: u, status: "Dry-Run"})
+				}
+				printUpgradeSummary(results)
+				return nil
+			}
+
+			execResults, hadErr := executePackageUpgrades(cmd, registry, ordered)
+			results = append(results, execResults...)
+			printUpgradeSummary(results)
+			if hadErr {
+				return fmt.Errorf("one or more package upgrades failed")
+			}
+			return nil
 		}
 
 		// Interactive selection mode

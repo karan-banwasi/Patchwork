@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -27,57 +28,79 @@ func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int) {
 }
 
 var pinCmd = &cobra.Command{
-	Use:               "pin <package-id>",
-	Short:             "Pin a package to ignore it during check and upgrade",
-	Long:              `Add a package ID or name to the Patchwork ignore list so it is skipped during 'pw check' and 'pw upgrade'.`,
-	Args:              cobra.ExactArgs(1),
+	Use:               "pin <package-id> [package-id...]",
+	Short:             "Pin one or more packages to ignore them during check and upgrade",
+	Long:              `Add one or more package IDs or names to the Patchwork ignore list so they are skipped during 'pw check' and 'pw upgrade'.`,
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: completeAvailablePackageIDs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id := args[0]
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-		if !cfg.Pin(id) {
-			cmd.Printf("Package %q is already pinned.\n", id)
-			return nil
+		anyChanged := false
+		for _, id := range args {
+			if !cfg.Pin(id) {
+				cmd.Printf("Package %q is already pinned.\n", id)
+				continue
+			}
+			anyChanged = true
+			cmd.Printf("Pinned package %q (will be skipped during check and upgrade).\n", id)
 		}
-		if err := cfg.Save(); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+		if anyChanged {
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("failed to save config: %w", err)
+			}
 		}
-		cmd.Printf("Pinned package %q (will be skipped during check and upgrade).\n", id)
 		return nil
 	},
 }
 
 var unpinCmd = &cobra.Command{
-	Use:   "unpin <package-id>",
-	Short: "Unpin a previously pinned package",
-	Long:  `Remove a package ID or name from the Patchwork ignore list so its updates are shown again.`,
-	Args:  cobra.ExactArgs(1),
+	Use:   "unpin <package-id> [package-id...]",
+	Short: "Unpin one or more previously pinned packages",
+	Long:  `Remove one or more package IDs or names from the Patchwork ignore list so their updates are shown again.`,
+	Args:  cobra.MinimumNArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) > 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
 		cfg, err := config.Load()
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		return cfg.PinnedPackages, cobra.ShellCompDirectiveNoFileComp
+		already := make(map[string]bool, len(args))
+		for _, a := range args {
+			already[strings.ToLower(a)] = true
+		}
+		var out []string
+		for _, p := range cfg.PinnedPackages {
+			if !already[strings.ToLower(p)] {
+				out = append(out, p)
+			}
+		}
+		return out, cobra.ShellCompDirectiveNoFileComp
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id := args[0]
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-		if !cfg.Unpin(id) {
-			return fmt.Errorf("package %q is not currently pinned", id)
+		var missing []string
+		anyChanged := false
+		for _, id := range args {
+			if !cfg.Unpin(id) {
+				missing = append(missing, id)
+				continue
+			}
+			anyChanged = true
+			cmd.Printf("Unpinned package %q.\n", id)
 		}
-		if err := cfg.Save(); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+		if anyChanged {
+			if err := cfg.Save(); err != nil {
+				return fmt.Errorf("failed to save config: %w", err)
+			}
 		}
-		cmd.Printf("Unpinned package %q.\n", id)
+		if len(missing) > 0 {
+			return fmt.Errorf("package %q is not currently pinned", strings.Join(missing, ", "))
+		}
 		return nil
 	},
 }

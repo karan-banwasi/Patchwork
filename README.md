@@ -4,13 +4,14 @@ A CLI tool to better manage package updates. Built natively in Go for Windows.
 ## Features
 - **Check for Updates**: Fetch a perfectly aligned, tabular list of all available package updates across your system.
 - **Interactive Upgrades**: Select exactly which packages you want to upgrade using an intuitive checkbox interface directly in your terminal (`Space` to select, `<Right>` to select all, `<Left>` to select none, or type to filter).
-- **Bulk & Targeted Upgrades**: Use `--all` to apply all pending updates at once, `--dry-run` to preview what will happen, or pass a specific Package ID to upgrade a single app.
-- **Multi-Package Manager Support**: Concurrently queries and manages updates across **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), and **.NET Global Tools** (`dotnet tool`).
-- **Package Pinning (Ignore List)**: Pin packages (`pw pin <id>`) so they are automatically skipped during `pw check` and `pw upgrade`.
+- **Bulk & Targeted Upgrades**: Use `--all` to apply all pending updates at once, `--dry-run` to preview what will happen, or pass one or more Package IDs to upgrade specific apps.
+- **Multi-Package Manager Support**: Concurrently queries and manages updates across **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **Rust Cargo Crates** (`cargo`), and **PowerShell Modules** (`psresource`).
+- **Package Pinning (Ignore List)**: Pin one or more packages (`pw pin <id>...`) so they are automatically skipped during `pw check` and `pw upgrade` (also respects native Chocolatey pins).
 - **Safe Terminal & Shell Self-Updating**: Automatically defers `Microsoft.PowerShell` and `Microsoft.WindowsTerminal` upgrades to the end of the queue and launches them in an isolated console window (`conhost.exe`) so closing your terminal mid-upgrade doesn't kill the installer or cause MSI error 1603.
 - **Auto-Elevation (UAC)**: Automatically prompts for Administrator privileges via Windows UAC when upgrading Chocolatey packages from a non-elevated shell.
 - **Machine-Readable Output**: Export pending updates as structured JSON (`--json`) or tab-separated rows (`--quiet`) for status bars (Oh My Posh, Yasb, GlazeWM) and automation scripts.
-- **In-Place Self-Updates**: Run `pw self-update` to update `pw.exe` directly from GitHub Releases.
+- **System Diagnostics & Cache Cleanup**: Inspect detected package managers and versions with `pw doctor` (`pw status`) and clean up old versions/caches with `pw cleanup` (`pw clean`).
+- **In-Place Self-Updates**: Run `pw self-update` to update `pw.exe` directly from GitHub Releases with automatic SHA-256 checksum verification.
 
 ## Supported Package Managers
 
@@ -22,7 +23,10 @@ Patchwork automatically detects which package managers are installed on your sys
 | **Scoop** | `scoop` | `scoop update` + `scoop status` | `scoop update <id>` |
 | **Chocolatey** | `choco` (or `chocolatey`) | `choco outdated --limit-output` | `choco upgrade <id> -y --no-progress` |
 | **npm (Global)** | `npm` | `npm outdated -g --json` | `npm install -g <id>@latest` |
-| **.NET Tools (Global)** | `dotnet` (or `dotnet-tool`) | `dotnet tool list -g` | `dotnet tool update -g <id>` |
+| **.NET Tools (Global)** | `dotnet` (or `dotnet-tool`) | `dotnet tool list -g` + concurrent NuGet search | `dotnet tool update -g <id>` |
+| **uv Python Tools** | `uv` (or `uv-tool`) | `uv tool list` + concurrent PyPI check | `uv tool upgrade <id>` |
+| **Rust Cargo Crates** | `cargo` (or `rust`) | `cargo install --list` + concurrent crates.io check | `cargo install <id>` |
+| **PowerShell Modules** | `psresource` (or `powershell`) | `Get-InstalledPSResource` + `Find-PSResource` | `Update-PSResource -Name <id>` |
 
 ## Installation
 
@@ -117,13 +121,15 @@ pw upgrade -m scoop
 pw upgrade --manager winget
 ```
 
-**Upgrade a specific package by ID or Name:**
+**Upgrade one or more specific packages by ID or Name:**
 ```powershell
 pw upgrade Microsoft.VisualStudioCode
+pw upgrade Git.Git Microsoft.PowerShell
 
 # Target a specific package manager explicitly:
 pw upgrade git -m scoop
 pw upgrade typescript -m npm
+pw upgrade ruff -m uv
 ```
 
 **Upgrade all available packages at once:**
@@ -150,14 +156,16 @@ pw upgrade --dry-run
 If a package has a broken installer or you want to hold back its version, pin it so Patchwork skips it during `pw check` and `pw upgrade`:
 
 ```powershell
-# Pin a package by ID or Name (supports Tab completion)
+# Pin one or more packages by ID or Name (supports Tab completion)
 pw pin Microsoft.VisualStudioCode
+pw pin Git.Git nodejs
 
 # List all currently pinned packages
 pw pinned
 
-# Unpin a package so updates are shown again
+# Unpin one or more packages so updates are shown again
 pw unpin Microsoft.VisualStudioCode
+pw unpin Git.Git nodejs
 ```
 
 Pinned packages are saved in `%APPDATA%\Patchwork\config.json` (you can override this path by setting the `PATCHWORK_CONFIG` environment variable).
@@ -181,7 +189,37 @@ Add-Content -Path $PROFILE -Value "`npw completion powershell | Out-String | Inv
 
 ---
 
-### 5. Version Information (`pw version`)
+### 5. System Diagnostics (`pw doctor` / `pw status`)
+
+Inspect detected package managers, their versions, resolved executable paths, and Patchwork configuration paths:
+
+```powershell
+pw doctor
+# or
+pw status
+```
+
+---
+
+### 6. Cache & Old Version Cleanup (`pw cleanup` / `pw clean`)
+
+Remove old package versions and prune download caches across installed managers (`scoop`, `npm`, `uv`), as well as Patchwork's temporary completion cache:
+
+```powershell
+# Clean up all supported managers
+pw cleanup
+# or
+pw clean
+
+# Clean up a specific package manager only
+pw cleanup -m scoop
+pw cleanup -m npm
+pw cleanup -m uv
+```
+
+---
+
+### 7. Version Information (`pw version`)
 
 ```powershell
 pw version
@@ -225,6 +263,7 @@ This repository includes a validated Winget v1.6.0 portable package manifest (`K
 - [x] **Auto-Elevation (UAC) Prompt**: Offer automatic UAC elevation when upgrading Chocolatey or administrator-scoped packages from a non-elevated shell.
 - [x] **Machine-Readable Output (`--json` / `--quiet`)**: Support structured JSON output on `pw check` for status bars (Oh My Posh, Yasb, GlazeWM) and scripts.
 - [x] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview planned upgrades and display a final status table (`Succeeded`, `Failed`, `Skipped`) after bulk runs.
-- [x] **Shell Completions (`pw completion powershell`)**: Dynamic tab completion for subcommands, manager names (`-m`), and available package IDs.
-- [x] **Additional Global Tool Managers**: Extend `pm.Manager` to support `npm` global packages and `dotnet tool` global tools.
+- [x] **Shell Completions (`pw completion powershell`)**: Dynamic tab completion for subcommands, manager names (`-m`), and available package IDs (with fast short-lived caching).
+- [x] **Additional Global Tool Managers**: Extend `pm.Manager` to support `npm`, `dotnet tool`, `uv tool`, `cargo`, and `psresource`.
+- [x] **Diagnostics & Cleanup (`pw doctor`, `pw cleanup`)**: Inspect detected managers/paths and prune package caches.
 

@@ -182,6 +182,30 @@ func TestParseWingetOutput_FiltersUnknownVersion(t *testing.T) {
 	}
 }
 
+func TestParseWingetOutput_SecondaryTableSkipped(t *testing.T) {
+	sampleOutput := `Name                                      Id                                     Version       Available     Source
+------------------------------------------------------------------------------------------------------------------
+Git                                       Git.Git                                2.55.0.2      2.55.0.3      winget
+1 upgrades available.
+
+The following packages have an upgrade available, but require explicit targeting for upgrade:
+Name                                      Id                                     Version       Available     Source
+------------------------------------------------------------------------------------------------------------------
+Pinned Tool                               Vendor.PinnedTool                      1.0.0         2.0.0         winget
+`
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, u := range updates {
+		if strings.EqualFold(u.Name, "Name") && strings.EqualFold(u.Id, "Id") {
+			t.Errorf("secondary table header was parsed as a package update: %+v", u)
+		}
+	}
+}
+
 func TestShouldOmitSilent(t *testing.T) {
 	tests := []struct {
 		id       string

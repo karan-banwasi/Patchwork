@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -14,17 +16,27 @@ func completeManagerNames(cmd *cobra.Command, args []string, toComplete string) 
 }
 
 func completeAvailablePackageIDs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) > 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
+	alreadySelected := make(map[string]bool, len(args))
+	for _, a := range args {
+		alreadySelected[strings.ToLower(a)] = true
 	}
-	reg := getDefaultRegistry()
-	updates, err := reg.FetchAllUpdates(cmd.Context())
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
+
+	updates, ok := config.LoadUpdateCache(10 * time.Minute)
+	if !ok {
+		reg := getDefaultRegistry()
+		var err error
+		updates, err = reg.FetchAllUpdates(cmd.Context())
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		_ = config.SaveUpdateCache(updates)
 	}
 	updates, _ = filterOutPinned(updates)
 	var completions []string
 	for _, u := range updates {
+		if alreadySelected[strings.ToLower(u.Id)] {
+			continue
+		}
 		if toComplete == "" || strings.HasPrefix(strings.ToLower(u.Id), strings.ToLower(toComplete)) {
 			completions = append(completions, fmt.Sprintf("%s\t%s (%s -> %s, %s)", u.Id, u.Name, u.Version, u.AvailableVersion, u.ManagerName))
 		}

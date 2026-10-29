@@ -42,23 +42,20 @@ func UpgradePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpgradeAll upgrades all installed chocolatey packages using choco upgrade all -y.
+// UpgradeAll upgrades all outdated chocolatey packages.
 func UpgradeAll(ctx context.Context) error {
-	exe, err := chocoPath()
+	updates, err := GetAvailableUpdates(ctx)
 	if err != nil {
 		return err
 	}
-
-	if !isElevated() {
-		fmt.Println("Chocolatey requires Administrator privileges to upgrade packages. Requesting UAC elevation...")
-		return runElevated(exe, "upgrade", "all", "-y", "--no-progress")
+	var hadErr bool
+	for _, u := range updates {
+		if err := UpgradePackage(ctx, u.Id); err != nil {
+			hadErr = true
+		}
 	}
-
-	cmd := exec.CommandContext(ctx, exe, "upgrade", "all", "-y", "--no-progress")
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	if hadErr {
+		return fmt.Errorf("one or more chocolatey package upgrades failed")
+	}
+	return nil
 }

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
@@ -55,20 +57,40 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 		return []pm.PackageUpdate{}, nil
 	}
 
-	var updates []pm.PackageUpdate
+	var (
+		updates []pm.PackageUpdate
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		sem     = make(chan struct{}, 4) // bound concurrent NuGet searches
+	)
+
 	for _, tool := range tools {
-		searchCmd := exec.CommandContext(ctx, exe, "tool", "search", tool.Id, "--take", "1")
-		var sOut bytes.Buffer
-		searchCmd.Stdout = &sOut
-		if err := searchCmd.Run(); err != nil {
-			continue
-		}
-		latest := parseDotnetToolSearchLatest(sOut.String(), tool.Id)
-		if latest != "" && latest != tool.Version {
-			tool.AvailableVersion = latest
-			updates = append(updates, tool)
-		}
+		wg.Add(1)
+		go func(t pm.PackageUpdate) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			searchCmd := exec.CommandContext(ctx, exe, "tool", "search", t.Id, "--take", "5")
+			var sOut bytes.Buffer
+			searchCmd.Stdout = &sOut
+			if err := searchCmd.Run(); err != nil {
+				return
+			}
+			latest := parseDotnetToolSearchLatest(sOut.String(), t.Id)
+			if latest != "" && latest != t.Version {
+				t.AvailableVersion = latest
+				mu.Lock()
+				updates = append(updates, t)
+				mu.Unlock()
+			}
+		}(tool)
 	}
+	wg.Wait()
+
+	sort.Slice(updates, func(i, j int) bool {
+		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
+	})
 	return updates, nil
 }
 
@@ -130,13 +152,14 @@ func (d *DotnetManager) UpgradePackage(ctx context.Context, id string) error {
 }
 
 func (d *DotnetManager) UpgradeAll(ctx context.Context) error {
-	exe, err := dotnetPath()
+	updates, err := d.GetAvailableUpdates(ctx)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "tool", "update", "-g", "--all")
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	for _, u := range updates {
+		if err := d.UpgradePackage(ctx, u.Id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

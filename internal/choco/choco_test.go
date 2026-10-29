@@ -83,3 +83,22 @@ func TestParseChocoOutput_Empty(t *testing.T) {
 		t.Fatalf("expected 0 updates, got %d", len(updates))
 	}
 }
+
+func TestParseChocoOutput_SkipsPinned(t *testing.T) {
+	sampleOutput := `Chocolatey v1.4.0
+git.install|2.40.0|2.41.0|false
+nodejs|20.0.0|21.0.0|true
+Chocolatey has determined 1 package(s) are outdated.`
+
+	updates, err := parseChocoOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update after skipping pinned choco package, got %d", len(updates))
+	}
+	if updates[0].Id != "git.install" {
+		t.Errorf("expected git.install, got %q", updates[0].Id)
+	}
+}

@@ -36,6 +36,10 @@ func (r *Registry) GetManager(name string) (Manager, bool) {
 		norm = "psresource"
 	case "dotnet-tool":
 		norm = "dotnet"
+	case "uv-tool":
+		norm = "uv"
+	case "rust":
+		norm = "cargo"
 	}
 	for _, m := range r.managers {
 		if strings.EqualFold(m.Name(), norm) {

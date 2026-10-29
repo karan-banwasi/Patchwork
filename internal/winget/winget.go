@@ -261,7 +261,9 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 		// Ignore non-package lines that might get caught at the bottom
 		// Winget package IDs do not contain spaces
 		// Also skip packages with "Unknown" installed version which cannot be cleanly upgraded
-		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") && !strings.EqualFold(version, "Unknown") {
+		// and skip repeated header rows from secondary Winget tables (e.g., pinned/explicit targeting sections)
+		isRepeatHeader := strings.EqualFold(name, "Name") && (strings.EqualFold(id, "Id") || strings.EqualFold(id, "ID")) && strings.EqualFold(version, "Version")
+		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") && !strings.EqualFold(version, "Unknown") && !isRepeatHeader {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             name,
 				Id:               id,

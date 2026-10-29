@@ -115,6 +115,9 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 		if strings.Contains(trimmed, "|") {
 			parts := strings.Split(trimmed, "|")
 			if len(parts) >= 3 {
+				if len(parts) >= 4 && strings.EqualFold(strings.TrimSpace(parts[3]), "true") {
+					continue
+				}
 				name := strings.TrimSpace(parts[0])
 				current := strings.TrimSpace(parts[1])
 				available := strings.TrimSpace(parts[2])
@@ -136,6 +139,9 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 		// Fallback for space-separated tabular format (e.g., "git.install 2.40.0 2.41.0 false")
 		fields := strings.Fields(trimmed)
 		if len(fields) >= 3 && !strings.HasPrefix(fields[0], "-") && !strings.EqualFold(fields[0], "Title") {
+			if len(fields) >= 4 && strings.EqualFold(fields[3], "true") {
+				continue
+			}
 			updates = append(updates, pm.PackageUpdate{
 				Name:             fields[0],
 				Id:               fields[0],

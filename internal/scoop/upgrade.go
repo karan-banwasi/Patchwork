@@ -34,18 +34,20 @@ func UpgradePackage(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpgradeAll upgrades all installed scoop packages using scoop update *.
+// UpgradeAll upgrades all outdated scoop packages.
 func UpgradeAll(ctx context.Context) error {
-	exe, err := scoopPath()
+	updates, err := GetAvailableUpdates(ctx)
 	if err != nil {
 		return err
 	}
-
-	cmd := exec.CommandContext(ctx, exe, "update", "*")
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	var hadErr bool
+	for _, u := range updates {
+		if err := UpgradePackage(ctx, u.Id); err != nil {
+			hadErr = true
+		}
+	}
+	if hadErr {
+		return fmt.Errorf("one or more scoop package upgrades failed")
+	}
+	return nil
 }

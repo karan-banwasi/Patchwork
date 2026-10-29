@@ -38,5 +38,6 @@ Patchwork is a Windows CLI utility designed to iterate through packages that hav
 - [x] **Machine-Readable Output (`--json` / `--quiet`)**: Structured output on `pw check` for terminal prompt segments and status bars.
 - [x] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview upgrade queues and print a final summary table (`Succeeded`, `Failed`, `Skipped`) after batch upgrades.
 - [x] **Shell Completions (`pw completion powershell`)**: Register `ValidArgsFunction` for tab-completing pending package IDs and manager names.
-- [x] **Additional Global Tool Managers**: Add `internal/<manager>` implementations for `npm -g` and `dotnet tool`.
+- [x] **Additional Global Tool Managers**: Add `internal/<manager>` implementations for `npm -g`, `dotnet tool`, `uv tool`, `cargo`, and `psresource`.
+- [x] **Diagnostics & Cache Cleanup (`pw doctor`, `pw cleanup`)**: Inspect detected package managers/paths and clean up caches across managers.
 

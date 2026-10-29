@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 // Config represents the persistent user configuration for Patchwork.
@@ -109,4 +112,47 @@ func (c *Config) IsPinned(id, name string) bool {
 		}
 	}
 	return false
+}
+
+// UpdateCache represents a short-lived cache of available package updates for fast shell completions.
+type UpdateCache struct {
+	UpdatedAt time.Time          `json:"updated_at"`
+	Updates   []pm.PackageUpdate `json:"updates"`
+}
+
+// CachePath returns the path to the temporary update cache file.
+func CachePath() string {
+	if custom := os.Getenv("PATCHWORK_CACHE"); custom != "" {
+		return custom
+	}
+	return filepath.Join(os.TempDir(), "patchwork-updates-cache.json")
+}
+
+// SaveUpdateCache writes the latest update check results to the temporary cache file.
+func SaveUpdateCache(updates []pm.PackageUpdate) error {
+	cache := UpdateCache{
+		UpdatedAt: time.Now(),
+		Updates:   updates,
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(CachePath(), data, 0600)
+}
+
+// LoadUpdateCache reads cached package updates if the cache file exists and is newer than maxAge.
+func LoadUpdateCache(maxAge time.Duration) ([]pm.PackageUpdate, bool) {
+	data, err := os.ReadFile(CachePath())
+	if err != nil {
+		return nil, false
+	}
+	var cache UpdateCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, false
+	}
+	if time.Since(cache.UpdatedAt) > maxAge {
+		return nil, false
+	}
+	return cache.Updates, true
 }

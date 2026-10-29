@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -61,6 +64,28 @@ func parseSemverParts(v string) [3]int {
 		}
 	}
 	return res
+}
+
+// extractExpectedSHA256 parses KaranBanwasi.Patchwork.installer.yaml content and returns
+// the expected SHA256 hash (uppercase hex) for the given architecture ("x64" or "arm64").
+func extractExpectedSHA256(installerYAML, arch string) string {
+	lines := strings.Split(installerYAML, "\n")
+	inMatchingArch := false
+	archPattern := regexp.MustCompile(`(?i)^\s*-?\s*Architecture:\s*(\S+)`)
+	shaPattern := regexp.MustCompile(`(?i)^\s*InstallerSha256:\s*([A-Fa-f0-9]{64})`)
+
+	for _, line := range lines {
+		if m := archPattern.FindStringSubmatch(line); len(m) == 2 {
+			inMatchingArch = strings.EqualFold(m[1], arch)
+			continue
+		}
+		if inMatchingArch {
+			if m := shaPattern.FindStringSubmatch(line); len(m) == 2 {
+				return strings.ToUpper(m[1])
+			}
+		}
+	}
+	return ""
 }
 
 var selfUpdateCmd = &cobra.Command{
@@ -121,14 +146,43 @@ var selfUpdateCmd = &cobra.Command{
 		}
 
 		var targetAsset *ghAsset
+		var manifestAsset *ghAsset
 		for i := range rel.Assets {
 			if rel.Assets[i].Name == assetName {
 				targetAsset = &rel.Assets[i]
-				break
+			}
+			if rel.Assets[i].Name == "KaranBanwasi.Patchwork.installer.yaml" {
+				manifestAsset = &rel.Assets[i]
 			}
 		}
 		if targetAsset == nil {
 			return fmt.Errorf("release %s does not contain asset %q", rel.TagName, assetName)
+		}
+
+		// Optionally fetch installer manifest to verify SHA-256 checksum
+		expectedSHA := ""
+		if manifestAsset != nil {
+			reqMan, errMan := http.NewRequestWithContext(ctx, http.MethodGet, manifestAsset.BrowserDownloadURL, nil)
+			if errMan == nil {
+				reqMan.Header.Set("User-Agent", "Patchwork-CLI")
+				if token != "" && manifestAsset.URL != "" {
+					reqMan.URL, _ = reqMan.URL.Parse(manifestAsset.URL)
+					reqMan.Header.Set("Authorization", "Bearer "+token)
+					reqMan.Header.Set("Accept", "application/octet-stream")
+				}
+				if respMan, errDo := http.DefaultClient.Do(reqMan); errDo == nil {
+					if respMan.StatusCode == http.StatusOK {
+						if bodyBytes, errRead := io.ReadAll(respMan.Body); errRead == nil {
+							wingetArch := "x64"
+							if runtime.GOARCH == "arm64" {
+								wingetArch = "arm64"
+							}
+							expectedSHA = extractExpectedSHA256(string(bodyBytes), wingetArch)
+						}
+					}
+					_ = respMan.Body.Close()
+				}
+			}
 		}
 
 		fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
@@ -171,12 +225,23 @@ var selfUpdateCmd = &cobra.Command{
 		}
 		tmpPath := tmpFile.Name()
 
-		if _, err := io.Copy(tmpFile, respDL.Body); err != nil {
+		hasher := sha256.New()
+		if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), respDL.Body); err != nil {
 			_ = tmpFile.Close()
 			_ = os.Remove(tmpPath)
 			return fmt.Errorf("failed to write downloaded binary: %w", err)
 		}
 		_ = tmpFile.Close()
+
+		if expectedSHA != "" {
+			actualSHA := strings.ToUpper(hex.EncodeToString(hasher.Sum(nil)))
+			if !strings.EqualFold(actualSHA, expectedSHA) {
+				_ = os.Remove(tmpPath)
+				return fmt.Errorf("SHA256 checksum mismatch for %s: expected %s, got %s", assetName, expectedSHA, actualSHA)
+			}
+			fmt.Fprintf(out, "Verified SHA256 checksum (%s).\n", actualSHA[:12])
+		}
+
 		_ = os.Chmod(tmpPath, 0755)
 
 		oldPath := exePath + ".old"

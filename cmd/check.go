@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/spf13/cobra"
 )
@@ -51,6 +52,10 @@ var checkCmd = &cobra.Command{
 
 		if err != nil {
 			return fmt.Errorf("error checking for updates: %w", err)
+		}
+
+		if checkManager == "" {
+			_ = config.SaveUpdateCache(updates)
 		}
 
 		var pinnedCount int
