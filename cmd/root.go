@@ -6,6 +6,8 @@ import (
 	"os/signal"
 
 	"github.com/karan-banwasi/patchwork/internal/choco"
+	"github.com/karan-banwasi/patchwork/internal/dotnet"
+	"github.com/karan-banwasi/patchwork/internal/npm"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/scoop"
 	"github.com/karan-banwasi/patchwork/internal/winget"
@@ -20,6 +22,8 @@ func getDefaultRegistry() *pm.Registry {
 		winget.NewWingetManager(),
 		scoop.NewScoopManager(),
 		choco.NewChocoManager(),
+		npm.NewNpmManager(),
+		dotnet.NewDotnetManager(),
 	)
 }
 

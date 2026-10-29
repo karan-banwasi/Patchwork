@@ -29,8 +29,13 @@ func (r *Registry) Register(m Manager) {
 // GetManager returns a registered package manager by its name (case-insensitive, supporting aliases).
 func (r *Registry) GetManager(name string) (Manager, bool) {
 	norm := strings.ToLower(strings.TrimSpace(name))
-	if norm == "chocolatey" {
+	switch norm {
+	case "chocolatey":
 		norm = "choco"
+	case "powershell", "psresource", "psresourceget":
+		norm = "psresource"
+	case "dotnet-tool":
+		norm = "dotnet"
 	}
 	for _, m := range r.managers {
 		if strings.EqualFold(m.Name(), norm) {
@@ -38,6 +43,15 @@ func (r *Registry) GetManager(name string) (Manager, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ManagerNames returns the names of all registered package managers.
+func (r *Registry) ManagerNames() []string {
+	names := make([]string, len(r.managers))
+	for i, m := range r.managers {
+		names[i] = m.Name()
+	}
+	return names
 }
 
 // ActiveManagers returns all registered package managers that are available on the system.

@@ -29,14 +29,14 @@ Patchwork is a Windows CLI utility designed to iterate through packages that hav
 - **UI Consistency**: Maintain tabular alignment and spacing for terminal output to match the native feel of tools like `winget`.
 
 ## Future Roadmap
-- Publish `Patchwork` package manifest to `microsoft/winget-pkgs` for native `winget install Patchwork` support.
+- [x] Publish `Patchwork` package manifest (`KaranBanwasi.Patchwork`) and CI automation to `microsoft/winget-pkgs` for native `winget install Patchwork` support.
 - [x] Expand support beyond Winget (Scoop, Chocolatey).
 - [x] Add functionality to group updates by package manager (`--by-manager`).
-- [ ] **Package Pinning / Ignore List**: Add `pw pin <id>`, `pw unpin <id>`, and `pw pinned` to skip excluded packages during `pw check` and `pw upgrade`.
-- [ ] **Self-Update Subcommand (`pw self-update`)**: In-place binary update via GitHub Releases API.
-- [ ] **Auto-Elevation (UAC) Prompt**: Prompt and spawn elevated execution (`runas`) when Chocolatey or system-scoped installers require Administrator privileges.
-- [ ] **Machine-Readable Output (`--json` / `--quiet`)**: Structured output on `pw check` for terminal prompt segments and status bars.
-- [ ] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview upgrade queues and print a final summary table (`Succeeded`, `Failed`, `Skipped`) after batch upgrades.
-- [ ] **Shell Completions (`pw completion powershell`)**: Register `ValidArgsFunction` for tab-completing pending package IDs and manager names.
-- [ ] **Additional Global Tool Managers**: Add `internal/<manager>` implementations for `PSResourceGet`, `npm -g`, `uv tool` / `pipx`, `cargo`, and `dotnet tool`.
+- [x] **Package Pinning / Ignore List**: Add `pw pin <id>`, `pw unpin <id>`, and `pw pinned` to skip excluded packages during `pw check` and `pw upgrade`.
+- [x] **Self-Update Subcommand (`pw self-update`)**: In-place binary update via GitHub Releases API.
+- [x] **Auto-Elevation (UAC) Prompt**: Prompt and spawn elevated execution (`runas`) when Chocolatey or system-scoped installers require Administrator privileges.
+- [x] **Machine-Readable Output (`--json` / `--quiet`)**: Structured output on `pw check` for terminal prompt segments and status bars.
+- [x] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview upgrade queues and print a final summary table (`Succeeded`, `Failed`, `Skipped`) after batch upgrades.
+- [x] **Shell Completions (`pw completion powershell`)**: Register `ValidArgsFunction` for tab-completing pending package IDs and manager names.
+- [x] **Additional Global Tool Managers**: Add `internal/<manager>` implementations for `npm -g` and `dotnet tool`.
 

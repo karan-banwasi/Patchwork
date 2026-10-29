@@ -5,6 +5,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -15,13 +17,66 @@ var (
 	upgradeAll       bool
 	upgradeManager   string
 	upgradeByManager bool
+	upgradeDryRun    bool
 )
+
+type upgradeResult struct {
+	pkg      pm.PackageUpdate
+	status   string
+	duration time.Duration
+	err      error
+}
+
+// printUpgradeSummary renders a post-upgrade summary table of succeeded, failed, and skipped packages.
+func printUpgradeSummary(results []upgradeResult) {
+	if len(results) == 0 {
+		return
+	}
+	var succeeded, failed, skipped int
+	maxIdLen := 10
+	maxMgrLen := 7
+	maxStatusLen := 9
+
+	for _, r := range results {
+		switch r.status {
+		case "Succeeded":
+			succeeded++
+		case "Failed":
+			failed++
+		default:
+			skipped++
+		}
+		if n := utf8.RuneCountInString(r.pkg.Id); n > maxIdLen {
+			maxIdLen = n
+		}
+		if n := utf8.RuneCountInString(r.pkg.ManagerName); n > maxMgrLen {
+			maxMgrLen = n
+		}
+		if n := utf8.RuneCountInString(r.status); n > maxStatusLen {
+			maxStatusLen = n
+		}
+	}
+
+	fmt.Println("\n=== Upgrade Summary ===")
+	headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds   %%s\n", maxIdLen, maxMgrLen, maxStatusLen)
+	fmt.Printf(headerFmt, "Package ID", "Manager", "Status", "Duration")
+	fmt.Printf(headerFmt, strings.Repeat("-", maxIdLen), strings.Repeat("-", maxMgrLen), strings.Repeat("-", maxStatusLen), "--------")
+	for _, r := range results {
+		durStr := r.duration.Round(100 * time.Millisecond).String()
+		if r.duration == 0 {
+			durStr = "-"
+		}
+		fmt.Printf(headerFmt, r.pkg.Id, r.pkg.ManagerName, r.status, durStr)
+	}
+	fmt.Printf("\nTotal: %d | Succeeded: %d | Failed: %d | Skipped: %d\n", len(results), succeeded, failed, skipped)
+}
 
 // upgradeCmd represents the upgrade command
 var upgradeCmd = &cobra.Command{
-	Use:   "upgrade [package-id]",
-	Short: "Upgrade available packages",
-	Long:  `Upgrade a specific package by providing its ID, or upgrade all packages using the --all flag.`,
+	Use:               "upgrade [package-id]",
+	Short:             "Upgrade available packages",
+	Long:              `Upgrade a specific package by providing its ID, or upgrade all packages using the --all flag.`,
+	ValidArgsFunction: completeAvailablePackageIDs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if upgradeAll && len(args) > 0 {
 			return fmt.Errorf("--all and a package ID are mutually exclusive")
@@ -36,7 +91,7 @@ var upgradeCmd = &cobra.Command{
 		if upgradeManager != "" {
 			mgr, exists := registry.GetManager(upgradeManager)
 			if !exists {
-				return fmt.Errorf("unknown package manager %q (supported: winget, scoop, choco)", upgradeManager)
+				return fmt.Errorf("unknown package manager %q (supported: %s)", upgradeManager, strings.Join(registry.ManagerNames(), ", "))
 			}
 			if !mgr.IsAvailable(cmd.Context()) {
 				return fmt.Errorf("package manager %q is not installed or available on this system", upgradeManager)
@@ -45,42 +100,67 @@ var upgradeCmd = &cobra.Command{
 		}
 
 		if upgradeAll {
+			var updates []pm.PackageUpdate
+			var err error
 			if targetedMgr != nil {
-				fmt.Printf("Upgrading all available packages for %s...\n", targetedMgr.Name())
-				err := targetedMgr.UpgradeAll(cmd.Context())
-				if err != nil {
-					return fmt.Errorf("failed to upgrade packages for %s: %w", targetedMgr.Name(), err)
+				fmt.Printf("Fetching available updates for %s...\n", targetedMgr.Name())
+				updates, err = targetedMgr.GetAvailableUpdates(cmd.Context())
+			} else {
+				fmt.Println("Fetching available updates across package managers...")
+				updates, err = registry.FetchAllUpdates(cmd.Context())
+			}
+			if err != nil {
+				return fmt.Errorf("error fetching updates: %w", err)
+			}
+
+			var pinnedCount int
+			updates, pinnedCount = filterOutPinned(updates)
+			if len(updates) == 0 {
+				if pinnedCount > 0 {
+					fmt.Printf("No packages to upgrade (%d pinned package(s) skipped).\n", pinnedCount)
+				} else {
+					fmt.Println("All packages are up to date.")
 				}
-				fmt.Printf("\nSuccessfully completed upgrade for all %s packages.\n", targetedMgr.Name())
 				return nil
 			}
 
-			fmt.Println("Upgrading all available packages across package managers...")
-			var hadErr bool
-			for _, m := range registry.ActiveManagers(cmd.Context()) {
-				fmt.Printf("\n--- Running upgrade all for %s ---\n", m.Name())
-				err := m.UpgradeAll(cmd.Context())
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error upgrading packages for %s: %v\n", m.Name(), err)
-					hadErr = true
+			ordered := orderSelectedPackages(updates)
+			if upgradeDryRun {
+				fmt.Printf("[Dry Run] Would upgrade %d package(s):\n", len(ordered))
+				var results []upgradeResult
+				for _, pkg := range ordered {
+					results = append(results, upgradeResult{pkg: pkg, status: "Dry-Run"})
 				}
+				printUpgradeSummary(results)
+				return nil
 			}
+
+			fmt.Printf("\nUpgrading %d package(s)...\n", len(ordered))
+			results, hadErr := executePackageUpgrades(cmd, registry, ordered)
+			printUpgradeSummary(results)
 			if hadErr {
-				return fmt.Errorf("one or more package manager upgrades failed")
+				return fmt.Errorf("one or more package upgrades failed")
 			}
-			fmt.Println("\nSuccessfully completed upgrade for all packages.")
 			return nil
 		}
 
 		if len(args) > 0 {
 			packageId := args[0]
 			if targetedMgr != nil {
+				pkg := pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: targetedMgr.Name()}
+				if upgradeDryRun {
+					fmt.Printf("[Dry Run] Would upgrade package %s using %s.\n", packageId, targetedMgr.Name())
+					printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Dry-Run"}})
+					return nil
+				}
 				fmt.Printf("Upgrading package: %s using %s...\n", packageId, targetedMgr.Name())
+				start := time.Now()
 				err := targetedMgr.UpgradePackage(cmd.Context(), packageId)
 				if err != nil {
+					printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Failed", duration: time.Since(start), err: err}})
 					return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, targetedMgr.Name(), err)
 				}
-				fmt.Printf("Successfully upgraded package: %s\n", packageId)
+				printUpgradeSummary([]upgradeResult{{pkg: pkg, status: "Succeeded", duration: time.Since(start)}})
 				return nil
 			}
 
@@ -94,12 +174,19 @@ var upgradeCmd = &cobra.Command{
 			for _, u := range updates {
 				if strings.EqualFold(u.Id, packageId) || strings.EqualFold(u.Name, packageId) {
 					if mgr, ok := registry.GetManager(u.ManagerName); ok {
+						if upgradeDryRun {
+							fmt.Printf("[Dry Run] Would upgrade package %s (%s -> %s) using %s.\n", u.Id, u.Version, u.AvailableVersion, mgr.Name())
+							printUpgradeSummary([]upgradeResult{{pkg: u, status: "Dry-Run"}})
+							return nil
+						}
 						fmt.Printf("Upgrading package: %s using %s...\n", u.Id, mgr.Name())
+						start := time.Now()
 						err := mgr.UpgradePackage(cmd.Context(), u.Id)
 						if err != nil {
+							printUpgradeSummary([]upgradeResult{{pkg: u, status: "Failed", duration: time.Since(start), err: err}})
 							return fmt.Errorf("failed to upgrade package %s with %s: %w", packageId, mgr.Name(), err)
 						}
-						fmt.Printf("Successfully upgraded package: %s\n", u.Id)
+						printUpgradeSummary([]upgradeResult{{pkg: u, status: "Succeeded", duration: time.Since(start)}})
 						return nil
 					}
 				}
@@ -122,8 +209,15 @@ var upgradeCmd = &cobra.Command{
 			return fmt.Errorf("error fetching updates: %w", err)
 		}
 
+		var pinnedCount int
+		updates, pinnedCount = filterOutPinned(updates)
+
 		if len(updates) == 0 {
-			fmt.Println("No updates available.")
+			if pinnedCount > 0 {
+				fmt.Printf("No updates available (%d pinned package(s) skipped).\n", pinnedCount)
+			} else {
+				fmt.Println("No updates available.")
+			}
 			return nil
 		}
 
@@ -210,31 +304,51 @@ var upgradeCmd = &cobra.Command{
 
 		selectedPackages = orderSelectedPackages(selectedPackages)
 
-		fmt.Printf("\nUpgrading %d packages...\n", len(selectedPackages))
-		hadError := false
-		for _, pkg := range selectedPackages {
-			fmt.Printf("\n--- Upgrading: %s (%s) ---\n", pkg.Id, pkg.ManagerName)
-			mgr, exists := registry.GetManager(pkg.ManagerName)
-			if !exists {
-				fmt.Fprintf(os.Stderr, "Error: package manager %q not registered for package %s\n", pkg.ManagerName, pkg.Id)
-				hadError = true
-				continue
+		if upgradeDryRun {
+			fmt.Printf("\n[Dry Run] Would upgrade %d selected package(s):\n", len(selectedPackages))
+			var results []upgradeResult
+			for _, pkg := range selectedPackages {
+				results = append(results, upgradeResult{pkg: pkg, status: "Dry-Run"})
 			}
-			err := mgr.UpgradePackage(cmd.Context(), pkg.Id)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", pkg.Id, err)
-				hadError = true
-			} else {
-				fmt.Printf("Successfully upgraded %s\n", pkg.Id)
-			}
+			printUpgradeSummary(results)
+			return nil
 		}
-		
-		fmt.Println("\nAll selected upgrades have completed.")
+
+		fmt.Printf("\nUpgrading %d packages...\n", len(selectedPackages))
+		results, hadError := executePackageUpgrades(cmd, registry, selectedPackages)
+		printUpgradeSummary(results)
 		if hadError {
 			return fmt.Errorf("one or more package upgrades failed")
 		}
 		return nil
 	},
+}
+
+func executePackageUpgrades(cmd *cobra.Command, registry *pm.Registry, pkgs []pm.PackageUpdate) ([]upgradeResult, bool) {
+	var results []upgradeResult
+	hadError := false
+	for _, pkg := range pkgs {
+		fmt.Printf("\n--- Upgrading: %s (%s) ---\n", pkg.Id, pkg.ManagerName)
+		mgr, exists := registry.GetManager(pkg.ManagerName)
+		if !exists {
+			fmt.Fprintf(os.Stderr, "Error: package manager %q not registered for package %s\n", pkg.ManagerName, pkg.Id)
+			results = append(results, upgradeResult{pkg: pkg, status: "Failed", err: fmt.Errorf("manager not registered")})
+			hadError = true
+			continue
+		}
+		start := time.Now()
+		err := mgr.UpgradePackage(cmd.Context(), pkg.Id)
+		dur := time.Since(start)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error upgrading %s: %v\n", pkg.Id, err)
+			results = append(results, upgradeResult{pkg: pkg, status: "Failed", duration: dur, err: err})
+			hadError = true
+		} else {
+			fmt.Printf("Successfully upgraded %s\n", pkg.Id)
+			results = append(results, upgradeResult{pkg: pkg, status: "Succeeded", duration: dur})
+		}
+	}
+	return results, hadError
 }
 
 func isDeferredUpgradePackage(pkg pm.PackageUpdate) bool {
@@ -289,8 +403,10 @@ func initSurveyTemplates() {
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
 	upgradeCmd.Flags().BoolVarP(&upgradeAll, "all", "a", false, "Upgrade all available packages")
-	upgradeCmd.Flags().StringVarP(&upgradeManager, "manager", "m", "", "Target a specific package manager (winget, scoop, choco)")
+	upgradeCmd.Flags().StringVarP(&upgradeManager, "manager", "m", "", "Target a specific package manager")
 	upgradeCmd.Flags().BoolVar(&upgradeByManager, "by-manager", false, "Upgrade packages grouped by package manager")
+	upgradeCmd.Flags().BoolVar(&upgradeDryRun, "dry-run", false, "Preview packages that would be upgraded without installing")
+	_ = upgradeCmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
 	initSurveyTemplates()
 }
 

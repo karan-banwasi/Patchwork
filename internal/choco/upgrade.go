@@ -12,13 +12,14 @@ import (
 
 // UpgradePackage upgrades a specific package by its ID using choco upgrade -y.
 func UpgradePackage(ctx context.Context, id string) error {
-	if !isElevated() {
-		return fmt.Errorf("chocolatey requires Administrator privileges to upgrade packages. Please rerun Patchwork in an elevated shell (Run as Administrator)")
-	}
-
 	exe, err := chocoPath()
 	if err != nil {
 		return err
+	}
+
+	if !isElevated() {
+		fmt.Printf("Chocolatey requires Administrator privileges to upgrade %s. Requesting UAC elevation...\n", id)
+		return runElevated(exe, "upgrade", id, "-y", "--no-progress")
 	}
 
 	cmd := exec.CommandContext(ctx, exe, "upgrade", id, "-y", "--no-progress")
@@ -43,13 +44,14 @@ func UpgradePackage(ctx context.Context, id string) error {
 
 // UpgradeAll upgrades all installed chocolatey packages using choco upgrade all -y.
 func UpgradeAll(ctx context.Context) error {
-	if !isElevated() {
-		return fmt.Errorf("chocolatey requires Administrator privileges to upgrade packages. Please rerun Patchwork in an elevated shell (Run as Administrator)")
-	}
-
 	exe, err := chocoPath()
 	if err != nil {
 		return err
+	}
+
+	if !isElevated() {
+		fmt.Println("Chocolatey requires Administrator privileges to upgrade packages. Requesting UAC elevation...")
+		return runElevated(exe, "upgrade", "all", "-y", "--no-progress")
 	}
 
 	cmd := exec.CommandContext(ctx, exe, "upgrade", "all", "-y", "--no-progress")

@@ -6,12 +6,12 @@ import (
 
 // PackageUpdate represents an available update for a package managed by a package manager.
 type PackageUpdate struct {
-	Name             string
-	Id               string
-	Version          string
-	AvailableVersion string
-	Source           string
-	ManagerName      string
+	Name             string `json:"name"`
+	Id               string `json:"id"`
+	Version          string `json:"version"`
+	AvailableVersion string `json:"available_version"`
+	Source           string `json:"source"`
+	ManagerName      string `json:"manager"`
 }
 
 // Manager defines the common interface that all package managers (Winget, Scoop, Chocolatey, etc.) must implement.
