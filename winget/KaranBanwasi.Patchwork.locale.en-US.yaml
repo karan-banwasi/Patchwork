@@ -1,5 +1,4 @@
-﻿# Created with Patchwork Winget Manifest Generator
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 
 PackageIdentifier: KaranBanwasi.Patchwork
 PackageVersion: 0.0.22
@@ -26,4 +25,4 @@ Tags:
   - patchwork
 ReleaseNotesUrl: https://github.com/karan-banwasi/Patchwork/releases/tag/v0.0.22
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0

@@ -3,7 +3,7 @@
     Generates and validates the Windows Package Manager (winget-pkgs) manifest files for Patchwork.
 .DESCRIPTION
     Downloads the latest (or specified) release assets from GitHub (pw.exe and pw-arm64.exe),
-    computes their SHA256 hashes, writes the multi-file Winget v1.6.0 manifests under
+    computes their SHA256 hashes, writes the multi-file Winget v1.12.0 manifests under
     winget/manifests/k/KaranBanwasi/Patchwork/<version>/, and runs `winget validate`.
 .PARAMETER Version
     Optional version string (e.g. "0.0.22" or "v0.0.22"). If omitted, queries the latest GitHub release.
@@ -50,19 +50,17 @@ $manifestDir = Join-Path $PSScriptRoot "manifests\k\KaranBanwasi\Patchwork\$verC
 New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
 
 $versionYaml = @"
-# Created with Patchwork Winget Manifest Generator
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
 
 PackageIdentifier: $pkgId
 PackageVersion: $verClean
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 "@
 
 $localeYaml = @"
-# Created with Patchwork Winget Manifest Generator
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 
 PackageIdentifier: $pkgId
 PackageVersion: $verClean
@@ -89,12 +87,11 @@ Tags:
   - patchwork
 ReleaseNotesUrl: https://github.com/karan-banwasi/Patchwork/releases/tag/$tag
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 "@
 
 $installerYaml = @"
-# Created with Patchwork Winget Manifest Generator
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: $pkgId
 PackageVersion: $verClean
@@ -109,17 +106,18 @@ Installers:
     InstallerUrl: $urlArm64
     InstallerSha256: $shaArm64
 ManifestType: installer
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 "@
 
-Set-Content -Path (Join-Path $manifestDir "$pkgId.yaml") -Value $versionYaml -Encoding UTF8
-Set-Content -Path (Join-Path $manifestDir "$pkgId.locale.en-US.yaml") -Value $localeYaml -Encoding UTF8
-Set-Content -Path (Join-Path $manifestDir "$pkgId.installer.yaml") -Value $installerYaml -Encoding UTF8
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText((Join-Path $manifestDir "$pkgId.yaml"), ($versionYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $manifestDir "$pkgId.locale.en-US.yaml"), ($localeYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $manifestDir "$pkgId.installer.yaml"), ($installerYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
 
 # Also update template manifests in winget/ root
-Set-Content -Path (Join-Path $PSScriptRoot "$pkgId.yaml") -Value $versionYaml -Encoding UTF8
-Set-Content -Path (Join-Path $PSScriptRoot "$pkgId.locale.en-US.yaml") -Value $localeYaml -Encoding UTF8
-Set-Content -Path (Join-Path $PSScriptRoot "$pkgId.installer.yaml") -Value $installerYaml -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "$pkgId.yaml"), ($versionYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "$pkgId.locale.en-US.yaml"), ($localeYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot "$pkgId.installer.yaml"), ($installerYaml -replace "`r`n", "`n") + "`n", $utf8NoBom)
 
 Write-Host "`nGenerated manifests in: $manifestDir" -ForegroundColor Cyan
 
