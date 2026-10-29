@@ -94,24 +94,24 @@ jobs:
           sed -e "s/PackageVersion: .*/PackageVersion: $NEW_VERSION/" \
               -e "s|releases/tag/v.*|releases/tag/$NEW_TAG|" \
               winget/KaranBanwasi.Patchwork.locale.en-US.yaml > KaranBanwasi.Patchwork.locale.en-US.yaml
-          cat <<EOF > KaranBanwasi.Patchwork.installer.yaml
-          # yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
-
-          PackageIdentifier: KaranBanwasi.Patchwork
-          PackageVersion: $NEW_VERSION
-          InstallerType: portable
-          Commands:
-            - pw
-          Installers:
-            - Architecture: x64
-              InstallerUrl: https://github.com/$GH_REPO/releases/download/$NEW_TAG/pw.exe
-              InstallerSha256: $SHA_X64
-            - Architecture: arm64
-              InstallerUrl: https://github.com/$GH_REPO/releases/download/$NEW_TAG/pw-arm64.exe
-              InstallerSha256: $SHA_ARM64
-          ManifestType: installer
-          ManifestVersion: 1.6.0
-          EOF
+          {
+            echo "# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json"
+            echo ""
+            echo "PackageIdentifier: KaranBanwasi.Patchwork"
+            echo "PackageVersion: $NEW_VERSION"
+            echo "InstallerType: portable"
+            echo "Commands:"
+            echo "  - pw"
+            echo "Installers:"
+            echo "  - Architecture: x64"
+            echo "    InstallerUrl: https://github.com/$GH_REPO/releases/download/$NEW_TAG/pw.exe"
+            echo "    InstallerSha256: $SHA_X64"
+            echo "  - Architecture: arm64"
+            echo "    InstallerUrl: https://github.com/$GH_REPO/releases/download/$NEW_TAG/pw-arm64.exe"
+            echo "    InstallerSha256: $SHA_ARM64"
+            echo "ManifestType: installer"
+            echo "ManifestVersion: 1.6.0"
+          } > KaranBanwasi.Patchwork.installer.yaml
           
           # Create a GitHub Release with the compiled Windows binaries and Winget manifests attached
           gh release create "$NEW_TAG" pw.exe pw-arm64.exe \
@@ -121,7 +121,9 @@ jobs:
             --title "Release $NEW_TAG" --generate-notes
 
       - name: Publish to winget-pkgs
-        if: ${{ secrets.WINGET_TOKEN != '' }}
+        if: env.WINGET_TOKEN != ''
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: KaranBanwasi.Patchwork
