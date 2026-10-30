@@ -23,7 +23,7 @@ require (
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
 	// Note: Version selection for x/text and x/image is pinned higher
 	// due to go-winres requirements. See README.md for detailed rationale.
-	golang.org/x/image v0.39.0 // indirect
+	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.43.0 // indirect
