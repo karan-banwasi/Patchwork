@@ -281,17 +281,3 @@ This repository includes a validated Winget v1.6.0 portable package manifest (`K
    *(Uses a fast sparse git checkout + `gh pr create` to avoid GitHub's `429 gitmon` directory listing rate-limit in `wingetcreate`.)*
 3. **Automated Updates on Release**:
    Add a classic GitHub Personal Access Token (with `public_repo` scope) as a repository secret named `WINGET_TOKEN` in your GitHub repository settings. Every new release will automatically open a pull request to `microsoft/winget-pkgs`.
-
-## Roadmap
-- [x] Prepare and validate official `Patchwork` package manifests (`KaranBanwasi.Patchwork`) and CI release automation for `microsoft/winget-pkgs`.
-- [x] Expand package manager support beyond Winget (Scoop, Chocolatey).
-- [x] Group pending updates by package manager (`--by-manager`).
-- [x] **Package Pinning / Ignore List**: Add `pw pin <id>`, `pw unpin <id>`, and `pw pinned` to hide or skip excluded packages during `pw check` and `pw upgrade`.
-- [x] **Self-Update Subcommand (`pw self-update`)**: Upgrade `pw.exe` in-place directly from GitHub Releases without re-running `install.ps1`.
-- [x] **Auto-Elevation (UAC) Prompt**: Offer automatic UAC elevation when upgrading Chocolatey or administrator-scoped packages from a non-elevated shell.
-- [x] **Machine-Readable Output (`--json` / `--quiet`)**: Support structured JSON output on `pw check` for status bars (Oh My Posh, Yasb, GlazeWM) and scripts.
-- [x] **Dry-Run (`--dry-run`) & Post-Upgrade Summary Table**: Preview planned upgrades and display a final status table (`Succeeded`, `Failed`, `Skipped`) after bulk runs.
-- [x] **Shell Completions (`pw completion powershell`)**: Dynamic tab completion for subcommands, manager names (`-m`), and available package IDs (with fast short-lived caching).
-- [x] **Additional Global Tool Managers**: Extend `pm.Manager` to support `npm`, `dotnet tool`, `uv tool`, `cargo`, and `psresource`.
-- [x] **Diagnostics & Cleanup (`pw doctor`, `pw cleanup`)**: Inspect detected managers/paths and prune package caches.
-
