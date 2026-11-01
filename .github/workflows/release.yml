@@ -194,6 +194,7 @@ jobs:
 
       - name: Publish to winget-pkgs
         if: env.WINGET_TOKEN != ''
+        continue-on-error: true
         uses: vedantmgoyal9/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # main
         with:
           identifier: KaranBanwasi.Patchwork
