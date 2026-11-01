@@ -141,6 +141,19 @@ func TestParseWingetOutput_LocalizedHeader(t *testing.T) {
 	if updates[0].Name != "VLC media player" || updates[0].Id != "VideoLAN.VLC" || updates[0].Version != "3.0.18" || updates[0].AvailableVersion != "3.0.20" {
 		t.Errorf("unexpected package parse result: %+v", updates[0])
 	}
+
+	// Sample Japanese winget output where no English column names match
+	jpOutput := "名前                                      ID                                     バージョン    利用可能      ソース\n" +
+		"------------------------------------------------------------------------------------------------------------------\n" +
+		"Git                                       Git.Git                                2.45.0        2.46.0        winget\n"
+
+	jpUpdates, err := parseWingetOutput(jpOutput)
+	if err != nil {
+		t.Fatalf("unexpected error parsing Japanese winget output: %v", err)
+	}
+	if len(jpUpdates) != 1 || jpUpdates[0].Id != "Git.Git" || jpUpdates[0].AvailableVersion != "2.46.0" {
+		t.Errorf("unexpected Japanese parse result: %+v", jpUpdates)
+	}
 }
 
 func TestParseWingetOutput_UppercaseID(t *testing.T) {
@@ -179,6 +192,30 @@ func TestParseWingetOutput_FiltersUnknownVersion(t *testing.T) {
 
 	if updates[0].Id != "Git.Git" {
 		t.Errorf("expected Git.Git, got %q", updates[0].Id)
+	}
+}
+
+func TestParseWingetOutput_SecondaryTableSkipped(t *testing.T) {
+	sampleOutput := `Name                                      Id                                     Version       Available     Source
+------------------------------------------------------------------------------------------------------------------
+Git                                       Git.Git                                2.55.0.2      2.55.0.3      winget
+1 upgrades available.
+
+The following packages have an upgrade available, but require explicit targeting for upgrade:
+Name                                      Id                                     Version       Available     Source
+------------------------------------------------------------------------------------------------------------------
+Pinned Tool                               Vendor.PinnedTool                      1.0.0         2.0.0         winget
+`
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, u := range updates {
+		if strings.EqualFold(u.Name, "Name") && strings.EqualFold(u.Id, "Id") {
+			t.Errorf("secondary table header was parsed as a package update: %+v", u)
+		}
 	}
 }
 
@@ -277,5 +314,27 @@ func TestParseIsolatedUpgradeStatus(t *testing.T) {
 	}
 }
 
+func TestBuildIsolatedUpgradeScript_EscapesMetacharacters(t *testing.T) {
+	maliciousID := "Microsoft.PowerShell&calc|echo %PATH% !VAR! (x)"
+	script := buildIsolatedUpgradeScript(
+		`C:\winget.exe`,
+		maliciousID,
+		[]string{"upgrade", "--id", maliciousID},
+		`C:\status.txt`,
+	)
+	if strings.Contains(script, "&calc") && !strings.Contains(script, "^&calc") {
+		t.Errorf("expected '&' to be escaped in isolated batch script, got:\n%s", script)
+	}
+	if strings.Contains(script, "%PATH%") && !strings.Contains(script, "%%PATH%%") {
+		t.Errorf("expected '%%PATH%%' to be escaped in isolated batch script, got:\n%s", script)
+	}
+}
 
-
+func TestBuildUpgradeArgsWithOptions_DisableAgreements(t *testing.T) {
+	args := buildUpgradeArgsWithOptions("Git.Git", false)
+	for _, a := range args {
+		if strings.HasPrefix(a, "--accept-") {
+			t.Errorf("expected agreement flags to be omitted when acceptAgreements=false, got: %v", args)
+		}
+	}
+}

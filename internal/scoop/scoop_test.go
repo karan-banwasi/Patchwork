@@ -75,6 +75,29 @@ func TestParseScoopOutput_NoUpdates(t *testing.T) {
 	}
 }
 
+func TestParseScoopOutput_LocaleIndependentNoUpdates(t *testing.T) {
+	// Scoop output parser should not rely on English strings like "Everything is up to date."
+	// Any non-tabular status text, non-English translation, or arbitrary status output with 0 rows
+	// must cleanly return 0 updates and nil error.
+	nonEnglishOutputs := []string{
+		"Tous les paquets sont à jour.",
+		"Alles ist auf dem neuesten Stand.",
+		"すべてのパッケージは最新です。",
+		"Все пакеты обновлены.",
+		"Scoop status: OK",
+	}
+
+	for _, sample := range nonEnglishOutputs {
+		updates, err := parseScoopOutput(sample)
+		if err != nil {
+			t.Errorf("unexpected error on non-English output %q: %v", sample, err)
+		}
+		if len(updates) != 0 {
+			t.Errorf("expected 0 updates on non-English output %q, got %d", sample, len(updates))
+		}
+	}
+}
+
 func TestParseScoopOutput_Empty(t *testing.T) {
 	updates, err := parseScoopOutput("")
 	if err != nil {

@@ -6,14 +6,9 @@ import (
 )
 
 func TestCheckCmd_UnknownManager(t *testing.T) {
-	checkManager = ""
-	byManager = false
-	defer func() {
-		checkManager = ""
-		byManager = false
-	}()
-	rootCmd.SetArgs([]string{"check", "-m", "unknown-mgr"})
-	err := rootCmd.Execute()
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"check", "-m", "unknown-mgr"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error for unknown manager, got nil")
 	}
@@ -24,7 +19,7 @@ func TestCheckCmd_UnknownManager(t *testing.T) {
 
 func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 	reg := getDefaultRegistry()
-	for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey"} {
+	for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust", "psresource", "powershell", "psresourceget"} {
 		mgr, exists := reg.GetManager(name)
 		if !exists {
 			t.Errorf("expected manager %q to be recognized", name)
@@ -34,4 +29,3 @@ func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 		}
 	}
 }
-

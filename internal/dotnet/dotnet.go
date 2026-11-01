@@ -4,22 +4,71 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 // DotnetManager implements the pm.Manager interface for global .NET tools.
-type DotnetManager struct{}
+type DotnetManager struct {
+	runner pm.Runner
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
 
 func NewDotnetManager() *DotnetManager {
-	return &DotnetManager{}
+	return &DotnetManager{
+		runner: pm.ExecRunner{},
+		stdout: io.Discard,
+		stderr: io.Discard,
+	}
 }
 
 func (d *DotnetManager) Name() string {
 	return "dotnet"
+}
+
+func (d *DotnetManager) Aliases() []string {
+	return []string{"dotnet-tool"}
+}
+
+func (d *DotnetManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
+	d.stdin = stdin
+	if stdout != nil {
+		d.stdout = stdout
+	} else {
+		d.stdout = io.Discard
+	}
+	if stderr != nil {
+		d.stderr = stderr
+	} else {
+		d.stderr = io.Discard
+	}
+}
+
+func (d *DotnetManager) ValidateID(id string) error {
+	return pm.ValidateDotnetID(id)
+}
+
+func (d *DotnetManager) Path() (string, error) {
+	return dotnetPath()
+}
+
+func (d *DotnetManager) Version(ctx context.Context) (string, error) {
+	exe, err := dotnetPath()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.CommandContext(ctx, exe, "--version").Output()
+	if err != nil {
+		return "unknown", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (d *DotnetManager) IsAvailable(ctx context.Context) bool {
@@ -43,10 +92,13 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, exe, "tool", "list", "-g")
+	runner := d.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	if err := runner.Run(ctx, exe, []string{"tool", "list", "-g"}, nil, &stdout, io.Discard); err != nil {
 		return []pm.PackageUpdate{}, nil
 	}
 
@@ -55,20 +107,38 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 		return []pm.PackageUpdate{}, nil
 	}
 
-	var updates []pm.PackageUpdate
+	var (
+		updates []pm.PackageUpdate
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		sem     = make(chan struct{}, 4) // bound concurrent NuGet searches
+	)
+
 	for _, tool := range tools {
-		searchCmd := exec.CommandContext(ctx, exe, "tool", "search", tool.Id, "--take", "1")
-		var sOut bytes.Buffer
-		searchCmd.Stdout = &sOut
-		if err := searchCmd.Run(); err != nil {
-			continue
-		}
-		latest := parseDotnetToolSearchLatest(sOut.String(), tool.Id)
-		if latest != "" && latest != tool.Version {
-			tool.AvailableVersion = latest
-			updates = append(updates, tool)
-		}
+		wg.Add(1)
+		go func(t pm.PackageUpdate) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var sOut bytes.Buffer
+			if err := runner.Run(ctx, exe, []string{"tool", "search", t.Id, "--take", "5"}, nil, &sOut, io.Discard); err != nil {
+				return
+			}
+			latest := parseDotnetToolSearchLatest(sOut.String(), t.Id)
+			if latest != "" && latest != t.Version {
+				t.AvailableVersion = latest
+				mu.Lock()
+				updates = append(updates, t)
+				mu.Unlock()
+			}
+		}(tool)
 	}
+	wg.Wait()
+
+	sort.Slice(updates, func(i, j int) bool {
+		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
+	})
 	return updates, nil
 }
 
@@ -89,7 +159,7 @@ func parseDotnetToolList(output string) []pm.PackageUpdate {
 			continue
 		}
 		fields := strings.Fields(trimmed)
-		if len(fields) >= 2 {
+		if len(fields) >= 2 && pm.ValidateDotnetID(fields[0]) == nil {
 			tools = append(tools, pm.PackageUpdate{
 				Name:        fields[0],
 				Id:          fields[0],
@@ -118,25 +188,24 @@ func parseDotnetToolSearchLatest(output, targetID string) string {
 }
 
 func (d *DotnetManager) UpgradePackage(ctx context.Context, id string) error {
+	if err := d.ValidateID(id); err != nil {
+		return err
+	}
 	exe, err := dotnetPath()
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "tool", "update", "-g", id)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func (d *DotnetManager) UpgradeAll(ctx context.Context) error {
-	exe, err := dotnetPath()
-	if err != nil {
-		return err
+	runner := d.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
 	}
-	cmd := exec.CommandContext(ctx, exe, "tool", "update", "-g", "--all")
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	stdout := d.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := d.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	return runner.Run(ctx, exe, []string{"tool", "update", "-g", id}, d.stdin, stdout, stderr)
 }

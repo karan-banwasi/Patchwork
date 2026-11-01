@@ -76,13 +76,18 @@ try {
     & git commit -m "New package: $pkgId version $verClean"
     & git push -u origin "patchwork-$verClean" --force
 
-    Write-Host "Creating Pull Request to microsoft/winget-pkgs..." -ForegroundColor Cyan
-    & gh pr create `
-        --repo microsoft/winget-pkgs `
-        --head "${ghUser}:patchwork-$verClean" `
-        --base master `
-        --title "New package: $pkgId version $verClean" `
-        --body "###Checklist`n- [x] Have you signed the [Contributor License Agreement](https://cla.opensource.microsoft.com/)?`n- [x] Have you validated the manifest locally with ``winget validate``?"
+    $existingPr = (& gh pr list --repo microsoft/winget-pkgs --head "${ghUser}:patchwork-$verClean" --json url --jq ".[0].url")
+    if ($existingPr) {
+        Write-Host "Updated existing Pull Request: $existingPr" -ForegroundColor Green
+    } else {
+        Write-Host "Creating Pull Request to microsoft/winget-pkgs..." -ForegroundColor Cyan
+        & gh pr create `
+            --repo microsoft/winget-pkgs `
+            --head "${ghUser}:patchwork-$verClean" `
+            --base master `
+            --title "New package: $pkgId version $verClean" `
+            --body "###Checklist`n- [x] Have you signed the [Contributor License Agreement](https://cla.opensource.microsoft.com/)?`n- [x] Have you validated the manifest locally with ``winget validate``?"
+    }
 } finally {
     Pop-Location
     Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue

@@ -3,12 +3,18 @@
 package choco
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
 
+	"github.com/karan-banwasi/patchwork/internal/pm"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 // isElevated checks if the current process is running with Administrator privileges on Windows.
@@ -17,9 +23,47 @@ func isElevated() bool {
 	return token.IsElevated()
 }
 
+// trustedChocoPath resolves choco.exe strictly from machine-trusted locations
+// (HKLM machine environment or FOLDERID_ProgramData) and never from PATH or user environment variables.
+func trustedChocoPath() (string, error) {
+	k, err := registry.OpenKey(
+		registry.LOCAL_MACHINE,
+		`SYSTEM\CurrentControlSet\Control\Session Manager\Environment`,
+		registry.QUERY_VALUE,
+	)
+	if err == nil {
+		defer k.Close()
+		if dir, _, err := k.GetStringValue("ChocolateyInstall"); err == nil && dir != "" {
+			p := filepath.Join(dir, "bin", "choco.exe")
+			if _, err := os.Stat(p); err == nil {
+				return p, nil
+			}
+		}
+	}
+
+	pd, err := windows.KnownFolderPath(windows.FOLDERID_ProgramData, 0)
+	if err == nil && pd != "" {
+		p := filepath.Join(pd, "chocolatey", "bin", "choco.exe")
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+
+	return "", errors.New("trusted choco.exe not found in HKLM ChocolateyInstall or ProgramData; refusing to elevate")
+}
+
+// formatElevatedArgs quotes arguments using Windows CommandLineToArgvW rules.
+func formatElevatedArgs(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = pm.EscapeWindowsArg(a)
+	}
+	return strings.Join(quoted, " ")
+}
+
 // runElevated executes the given executable and arguments in an elevated UAC console window
-// using ShellExecuteExW ("runas") and waits for the process to exit.
-func runElevated(exe string, args ...string) error {
+// using ShellExecuteExW ("runas") and waits for the process to exit or ctx to be canceled.
+func runElevated(ctx context.Context, exe string, args ...string) error {
 	verbPtr, err := syscall.UTF16PtrFromString("runas")
 	if err != nil {
 		return err
@@ -28,16 +72,7 @@ func runElevated(exe string, args ...string) error {
 	if err != nil {
 		return err
 	}
-
-	var quotedArgs []string
-	for _, a := range args {
-		if strings.ContainsAny(a, " \t\"") {
-			quotedArgs = append(quotedArgs, fmt.Sprintf(`"%s"`, strings.ReplaceAll(a, `"`, `\"`)))
-		} else {
-			quotedArgs = append(quotedArgs, a)
-		}
-	}
-	paramPtr, err := syscall.UTF16PtrFromString(strings.Join(quotedArgs, " "))
+	paramPtr, err := syscall.UTF16PtrFromString(formatElevatedArgs(args))
 	if err != nil {
 		return err
 	}
@@ -45,7 +80,7 @@ func runElevated(exe string, args ...string) error {
 	type shellExecuteInfo struct {
 		cbSize       uint32
 		fMask        uint32
-		hwnd          uintptr
+		hwnd         uintptr
 		lpVerb       *uint16
 		lpFile       *uint16
 		lpParameters *uint16
@@ -81,7 +116,20 @@ func runElevated(exe string, args ...string) error {
 	}
 	if sei.hProcess != 0 {
 		defer windows.CloseHandle(sei.hProcess)
-		_, _ = windows.WaitForSingleObject(sei.hProcess, windows.INFINITE)
+		for {
+			event, waitErr := windows.WaitForSingleObject(sei.hProcess, 250)
+			if event == windows.WAIT_OBJECT_0 {
+				break
+			}
+			if event != uint32(windows.WAIT_TIMEOUT) && waitErr != nil {
+				return fmt.Errorf("waiting for elevated choco process failed: %w", waitErr)
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("waiting for elevated choco process canceled: %w", ctx.Err())
+			default:
+			}
+		}
 		var exitCode uint32
 		if err := windows.GetExitCodeProcess(sei.hProcess, &exitCode); err == nil && exitCode != 0 {
 			return fmt.Errorf("elevated choco process exited with code %d", exitCode)

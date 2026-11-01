@@ -11,6 +11,7 @@ import (
 )
 
 func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
+	initSurveyTemplates()
 	tmpl, err := template.New("prompt").Funcs(core.TemplateFuncsWithColor).Parse(survey.MultiSelectQuestionTemplate)
 	if err != nil {
 		t.Fatalf("failed to parse template: %v", err)
@@ -110,14 +111,9 @@ func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
 }
 
 func TestUpgradeCmd_MutuallyExclusiveAllAndArg(t *testing.T) {
-	upgradeAll = false
-	upgradeManager = ""
-	defer func() {
-		upgradeAll = false
-		upgradeManager = ""
-	}()
-	rootCmd.SetArgs([]string{"upgrade", "--all", "Some.Package"})
-	err := rootCmd.Execute()
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "--all", "Some.Package"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error when combining --all and package argument, got nil")
 	}
@@ -127,16 +123,9 @@ func TestUpgradeCmd_MutuallyExclusiveAllAndArg(t *testing.T) {
 }
 
 func TestUpgradeCmd_UnknownManager(t *testing.T) {
-	upgradeAll = false
-	upgradeManager = ""
-	upgradeByManager = false
-	defer func() {
-		upgradeAll = false
-		upgradeManager = ""
-		upgradeByManager = false
-	}()
-	rootCmd.SetArgs([]string{"upgrade", "Some.Package", "-m", "unknown-mgr"})
-	err := rootCmd.Execute()
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "Some.Package", "-m", "unknown-mgr"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error for unknown manager, got nil")
 	}
@@ -146,16 +135,9 @@ func TestUpgradeCmd_UnknownManager(t *testing.T) {
 }
 
 func TestUpgradeCmd_MutuallyExclusiveByManagerAndArg(t *testing.T) {
-	upgradeAll = false
-	upgradeManager = ""
-	upgradeByManager = false
-	defer func() {
-		upgradeAll = false
-		upgradeManager = ""
-		upgradeByManager = false
-	}()
-	rootCmd.SetArgs([]string{"upgrade", "--by-manager", "Some.Package"})
-	err := rootCmd.Execute()
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "--by-manager", "Some.Package"})
+	err := cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected error when combining --by-manager and package argument, got nil")
 	}
@@ -190,6 +172,31 @@ func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
 	}
 }
 
+func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
+	tmpCfg := t.TempDir() + "/config.json"
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
 
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"pin", "winget:Git.Git"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("failed to pin: %v", err)
+	}
 
+	targets := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+		{Id: "Git.Git", Name: "Git", ManagerName: "scoop"},
+	}
 
+	allowed, skipped := splitPinnedTargets(targets, false)
+	if len(allowed) != 1 || allowed[0].ManagerName != "scoop" {
+		t.Errorf("expected only scoop Git.Git to be allowed, got: %+v", allowed)
+	}
+	if len(skipped) != 1 || skipped[0].status != "Skipped (pinned)" {
+		t.Errorf("expected winget Git.Git to be Skipped (pinned), got: %+v", skipped)
+	}
+
+	allowedForced, skippedForced := splitPinnedTargets(targets, true)
+	if len(allowedForced) != 2 || len(skippedForced) != 0 {
+		t.Errorf("expected all targets allowed when ignorePins=true, got allowed=%d, skipped=%d", len(allowedForced), len(skippedForced))
+	}
+}
