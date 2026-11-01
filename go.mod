@@ -1,11 +1,12 @@
 module github.com/karan-banwasi/patchwork
 
-go 1.26.10
+go 1.27.0
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
 	github.com/spf13/cobra v1.10.2
 	github.com/tc-hib/go-winres v0.3.3
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -24,7 +25,6 @@ require (
 	// Note: Version selection for x/text and x/image is pinned higher
 	// due to go-winres requirements. See README.md for detailed rationale.
 	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
