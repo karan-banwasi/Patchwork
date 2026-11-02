@@ -93,10 +93,22 @@ const checkPSResourceScript = `
 $ErrorActionPreference = 'Stop'
 try {
     if (-not (Get-Command Get-InstalledPSResource -ErrorAction SilentlyContinue)) { exit 0 }
-    $installed = Get-InstalledPSResource -Scope CurrentUser | Group-Object Name | ForEach-Object { $_.Group | Sort-Object {[version]($_.Version -replace '-.*$','')} -Descending | Select-Object -First 1 }
+    $rawInstalled = try {
+        Get-InstalledPSResource -Scope CurrentUser -ErrorAction Stop
+    } catch {
+        if ($_.FullyQualifiedErrorId -like "*InstalledPackageNotFound*" -or $_.Exception.Message -like "*No match was found*") {
+            $null
+        } else {
+            throw
+        }
+    }
+    if (-not $rawInstalled) { exit 0 }
+    $installed = $rawInstalled | Group-Object Name | ForEach-Object { $_.Group | Sort-Object {[version]($_.Version -replace '-.*$','')} -Descending | Select-Object -First 1 }
     if (-not $installed) { exit 0 }
     $names = [string[]]($installed | Select-Object -ExpandProperty Name)
-    $found = Find-PSResource -Name $names | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 }
+    if (-not $names -or $names.Count -eq 0) { exit 0 }
+    $found = Find-PSResource -Name $names -ErrorAction SilentlyContinue | Group-Object Name | ForEach-Object { $_.Group | Select-Object -First 1 }
+    if (-not $found) { exit 0 }
     $foundMap = @{}
     foreach ($f in $found) { $foundMap[$f.Name.ToLower()] = $f }
     $updates = @()

@@ -1,6 +1,9 @@
 package psresource
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestParsePSResourceJSON_ArrayAndSingle(t *testing.T) {
 	arrayJSON := `[{"Name":"PSReadLine","Id":"PSReadLine","Version":"2.3.4","Available":"2.3.5","Source":"PSGallery"},{"Name":"Posh-Git","Id":"Posh-Git","Version":"1.0.0","Available":"1.1.0","Source":"PSGallery"}]`
@@ -27,4 +30,19 @@ func TestParsePSResourceJSON_ArrayAndSingle(t *testing.T) {
 	if _, err := parsePSResourceJSON("{malformed"); err == nil {
 		t.Errorf("expected parse error for malformed JSON, got nil")
 	}
+}
+
+func TestPSResourceManager_GetAvailableUpdates_SystemExecution(t *testing.T) {
+	mgr := NewPSResourceManager()
+	ctx := context.Background()
+	if !mgr.IsAvailable(ctx) {
+		t.Skip("PowerShell not available on system, skipping")
+	}
+
+	updates, err := mgr.GetAvailableUpdates(ctx)
+	if err != nil {
+		t.Fatalf("expected GetAvailableUpdates to succeed even if no packages are installed, got: %v", err)
+	}
+	// If no updates or some updates, shouldn't panic or fail
+	_ = updates
 }
