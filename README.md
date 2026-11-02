@@ -258,9 +258,9 @@ pw --version
 ## Development
 
 ### Code Generation (`go-winres`)
-This project uses [`go-winres`](https://github.com/tc-hib/go-winres) to embed the Windows application manifest, version metadata, and icon into the binary. The pre-built `.syso` files (`rsrc_windows_amd64.syso`, `rsrc_windows_arm64.syso`, `rsrc_windows_386.syso`) are committed to the repository, so a normal `go build` works out-of-the-box.
+This project uses [`go-winres`](https://github.com/tc-hib/go-winres) to embed the Windows application manifest (`longPathAware`, `asInvoker`), version metadata, and application icon into the binary. The generated `.syso` resource files are excluded from Git (`.gitignore`) to keep the repository clean.
 
-If you modify `winres/winres.json` or replace `winres/icon.png`, regenerate them with:
+During automated release builds, CI automatically stamps the exact semantic version and compiles the resources. For local development or whenever you modify `winres/winres.json` or `winres/icon.png`, generate the `.syso` files on-demand with:
 
 ```powershell
 go generate ./...

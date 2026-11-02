@@ -145,7 +145,7 @@ jobs:
           echo "Release tag: $NEW_TAG"
           
           # Generate Windows resource (.syso) files stamped with the exact release version
-          go run github.com/tc-hib/go-winres make --arch amd64,arm64,386 --product-version "$NEW_VERSION" --file-version "$NEW_VERSION"
+          go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64,arm64,386 --product-version "$NEW_VERSION" --file-version "$NEW_VERSION"
           
           # Cross-compile for Windows natively (amd64 and arm64) from Ubuntu
           GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw.exe .
