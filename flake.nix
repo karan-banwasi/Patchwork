@@ -14,20 +14,22 @@
       {
         packages.default = pkgs.buildGoModule {
           pname = "patchwork";
-          version = "0.0.27";
+          version = "0.0.28";
           src = ./.;
 
           vendorHash = null;
 
-          # Cross-compilation settings for Windows amd64 target
-          CGO_ENABLED = 0;
-          GOOS = "windows";
-          GOARCH = "amd64";
+          # Cross-compilation settings for Windows amd64 target via env
+          env = {
+            CGO_ENABLED = "0";
+            GOOS = "windows";
+            GOARCH = "amd64";
+          };
 
           ldflags = [
             "-s"
             "-w"
-            "-X github.com/karan-banwasi/patchwork/cmd.version=0.0.27"
+            "-X github.com/karan-banwasi/patchwork/cmd.version=0.0.28"
           ];
 
           postInstall = ''
