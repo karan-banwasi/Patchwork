@@ -20,10 +20,11 @@
           vendorHash = pkgs.lib.fakeHash;
 
           # Ensure go.mod version directive is compatible with Nixpkgs' Go version during hermetic build
-          # both in the goModules derivation and the final compilation derivation.
+          # both in the goModules fixed-output derivation and the final compilation derivation.
           overrideModAttrs = (_: {
             preBuild = ''
               sed -i 's/^go 1\.27\.[0-9]*/go 1.26/' go.mod
+              go mod tidy
             '';
           });
 
