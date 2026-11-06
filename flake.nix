@@ -19,6 +19,12 @@
 
           vendorHash = null;
 
+          # Ensure go.mod version directive is compatible with Nixpkgs' Go version during hermetic build
+          # without altering the tracked go.mod file in the repository.
+          prePatch = ''
+            sed -i 's/^go 1\.27\.[0-9]*/go 1.26/' go.mod
+          '';
+
           # Cross-compilation settings for Windows amd64 target via env
           env = {
             CGO_ENABLED = "0";
