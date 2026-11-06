@@ -1,0 +1,41 @@
+name: Nix CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nix-ci:
+    name: Determinate Nix CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Determinate Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup FlakeHub Cache
+        uses: DeterminateSystems/flakehub-cache-action@main
+
+      - name: Check Flake
+        run: nix flake check
+
+      - name: Run Tests in Nix DevShell
+        run: nix develop --command go test -v ./...
+
+      - name: Build Hermetic Package
+        run: nix build .#default

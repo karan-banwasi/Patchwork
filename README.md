@@ -257,6 +257,23 @@ pw --version
 
 ## Development
 
+### Development with Nix
+Patchwork supports zero-dependency local developer environments and hermetic builds via [Determinate Nix](https://determinate.systems/) and Nix Flakes.
+
+- **Install Nix** (Determinate Nix installer):
+  ```bash
+  curl -fsSL https://install.determinate.systems/nix | sh -s -- install
+  ```
+- **Run the Developer Shell**:
+  ```bash
+  nix develop
+  ```
+  *(Equipped with Go, `golangci-lint`, `gopls`, and `goreleaser`. If you use `direnv`, `.envrc` will automatically load this shell).*
+- **Build the Binary**:
+  ```bash
+  nix build
+  ```
+
 ### Code Generation (`go-winres`)
 This project uses [`go-winres`](https://github.com/tc-hib/go-winres) to embed the Windows application manifest (`longPathAware`, `asInvoker`), version metadata, and application icon into the binary. The generated `.syso` resource files are excluded from Git (`.gitignore`) to keep the repository clean.
 
