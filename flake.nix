@@ -17,9 +17,7 @@
           version = "0.0.28";
           src = ./.;
 
-          vendorHash = "sha256-Il8zMQj730rK2+/PoAg0efvbTlGKLMHjRbcJpv6dCJA=";
-          proxyVendor = true;
-          buildFlags = [ "-mod=mod" ];
+          vendorHash = pkgs.lib.fakeHash;
 
           # Ensure go.mod version directive is compatible with Nixpkgs' Go version during hermetic build
           # without altering the tracked go.mod file in the repository.
