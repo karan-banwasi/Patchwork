@@ -257,6 +257,7 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	var updates []pm.PackageUpdate
 
 	cleanOutput := ansiEscape.ReplaceAllString(output, "")
+	cleanOutput = strings.ReplaceAll(cleanOutput, "\r\n", "\n")
 	lines := strings.Split(cleanOutput, "\n")
 
 	headerLineIdx := -1
@@ -284,7 +285,7 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 		return updates, nil
 	}
 
-	headerLine := lines[headerLineIdx]
+	headerLine := strings.TrimRight(lines[headerLineIdx], "\r\n ")
 	if lastCR := strings.LastIndex(headerLine, "\r"); lastCR != -1 {
 		headerLine = headerLine[lastCR+1:]
 	}

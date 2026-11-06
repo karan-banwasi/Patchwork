@@ -9,6 +9,26 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
+func TestParseWingetOutput_CRLF(t *testing.T) {
+	sampleOutput := "Name                                   Id                                Version      Available  Source\r\n" +
+		"-------------------------------------------------------------------------------------------------------\r\n" +
+		"EpsonNet Print                         EPSON.EpsonNetPrint               3.2.1.0      3.3.1      winget\r\n" +
+		"Gemini                                 Google.GeminiDesktop              1.17.0       1.18.0     winget\r\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates, got %d", len(updates))
+	}
+
+	if updates[0].Id != "EPSON.EpsonNetPrint" || updates[1].Id != "Google.GeminiDesktop" {
+		t.Errorf("unexpected updates: %+v", updates)
+	}
+}
+
 func TestWingetManager_Name(t *testing.T) {
 	mgr := NewWingetManager()
 	if mgr.Name() != "winget" {
