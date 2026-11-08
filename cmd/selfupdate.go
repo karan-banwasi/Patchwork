@@ -119,6 +119,8 @@ func detectManagedInstall(exePath string) error {
 		return fmt.Errorf("Patchwork was installed with winget; run: winget upgrade KaranBanwasi.Patchwork (or pass --force to override)")
 	case strings.Contains(normalized, `\scoop\apps\`) || strings.Contains(normalized, `\scoop\shims\`):
 		return fmt.Errorf("Patchwork was installed with Scoop; run: scoop update patchwork (or pass --force to override)")
+	case strings.Contains(strings.ToLower(exePath), "/cellar/patchwork/") || strings.Contains(strings.ToLower(exePath), "/opt/homebrew/") || strings.Contains(strings.ToLower(exePath), "/home/linuxbrew/") || strings.Contains(strings.ToLower(exePath), "/.linuxbrew/"):
+		return fmt.Errorf("Patchwork was installed with Homebrew; run: brew upgrade patchwork (or pass --force to override)")
 	}
 	return nil
 }

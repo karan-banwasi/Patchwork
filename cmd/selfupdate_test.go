@@ -85,6 +85,11 @@ func TestDetectManagedInstall(t *testing.T) {
 		t.Errorf("expected scoop managed install error, got: %v", err)
 	}
 
+	brewExe := `/opt/homebrew/Cellar/patchwork/1.0.0/bin/pw`
+	if err := detectManagedInstall(brewExe); err == nil || !strings.Contains(err.Error(), "brew upgrade") {
+		t.Errorf("expected brew managed install error, got: %v", err)
+	}
+
 	standaloneExe := `C:\Users\user\AppData\Local\Programs\Patchwork\bin\pw.exe`
 	if err := detectManagedInstall(standaloneExe); err != nil {
 		t.Errorf("expected standalone path to succeed, got: %v", err)

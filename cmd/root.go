@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 
+	"github.com/karan-banwasi/patchwork/internal/brew"
 	"github.com/karan-banwasi/patchwork/internal/cargo"
 	"github.com/karan-banwasi/patchwork/internal/choco"
 	"github.com/karan-banwasi/patchwork/internal/dotnet"
@@ -20,18 +22,42 @@ import (
 
 var version = "dev" // overridden by -ldflags
 
-// getDefaultRegistry initializes the default registry of supported package managers.
+// getDefaultRegistry initializes the default registry of supported package managers for the current OS.
 func getDefaultRegistry() *pm.Registry {
-	return pm.NewRegistry(
-		winget.NewWingetManager(),
-		scoop.NewScoopManager(),
-		choco.NewChocoManager(),
+	return getDefaultRegistryForOS(runtime.GOOS)
+}
+
+// getDefaultRegistryForOS initializes the registry with managers appropriate for the given OS.
+func getDefaultRegistryForOS(goos string) *pm.Registry {
+	var managers []pm.Manager
+
+	switch goos {
+	case "windows":
+		managers = append(managers,
+			winget.NewWingetManager(),
+			scoop.NewScoopManager(),
+			choco.NewChocoManager(),
+			psresource.NewPSResourceManager(),
+		)
+	case "darwin", "linux":
+		managers = append(managers,
+			brew.NewBrewManager(),
+		)
+	default:
+		managers = append(managers,
+			brew.NewBrewManager(),
+		)
+	}
+
+	// Cross-platform runtime and tool package managers
+	managers = append(managers,
 		npm.NewNpmManager(),
 		dotnet.NewDotnetManager(),
 		uv.NewUvManager(),
 		cargo.NewCargoManager(),
-		psresource.NewPSResourceManager(),
 	)
+
+	return pm.NewRegistry(managers...)
 }
 
 // configureRegistryIO attaches the command's standard streams to all managers in the registry.
@@ -49,7 +75,7 @@ func NewRootCmd() *cobra.Command {
 		Use:          "pw",
 		Version:      version,
 		Short:        "Patchwork is a CLI tool to manage package updates",
-		Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers including Winget, Scoop, and Chocolatey.`,
+		Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers including Winget, Scoop, Chocolatey, and Homebrew.`,
 		SilenceUsage: true,
 	}
 

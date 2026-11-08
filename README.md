@@ -1,12 +1,12 @@
 # Patchwork
-A CLI tool to better manage package updates. Built natively in Go for Windows.
+A CLI tool to better manage package updates. Built natively in Go for Windows, macOS, and Linux.
 
 ## Features
 - **Check for Updates**: Fetch a perfectly aligned, tabular list of all available package updates across your system.
 - **Interactive Upgrades**: Select exactly which packages you want to upgrade using an intuitive checkbox interface directly in your terminal (`Space` to select, `<Right>` to select all, `<Left>` to select none, or type to filter).
 - **Bulk & Targeted Upgrades**: Use `--all` to apply all pending updates at once, `--dry-run` to preview what will happen, or pass one or more Package IDs to upgrade specific apps.
-- **Multi-Package Manager Support**: Concurrently queries and manages updates across **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **Rust Cargo Crates** (`cargo`), and **PowerShell Modules** (`psresource`).
-- **Package Pinning (Ignore List)**: Pin one or more packages (`pw pin <id>...`) so they are automatically skipped during `pw check` and `pw upgrade` (also respects native Chocolatey pins).
+- **Multi-Package Manager Support**: Concurrently queries and manages updates across **Homebrew** (`brew`), **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **Rust Cargo Crates** (`cargo`), and **PowerShell Modules** (`psresource`). Automatically platform-aware to only query relevant package managers for your operating system.
+- **Package Pinning (Ignore List)**: Pin one or more packages (`pw pin <id>...`) so they are automatically skipped during `pw check` and `pw upgrade` (also respects native Chocolatey and Homebrew pins).
 - **Safe Terminal & Shell Self-Updating**: Automatically defers `Microsoft.PowerShell` and `Microsoft.WindowsTerminal` upgrades to the end of the queue and launches them in an isolated console window (`conhost.exe`) so closing your terminal mid-upgrade doesn't kill the installer or cause MSI error 1603.
 - **Auto-Elevation (UAC)**: Automatically prompts for Administrator privileges via Windows UAC when upgrading Chocolatey packages from a non-elevated shell.
 - **Machine-Readable Output**: Export pending updates as structured JSON (`--json`) or tab-separated rows (`--quiet`) for status bars (Oh My Posh, Yasb, GlazeWM) and automation scripts.
@@ -17,16 +17,17 @@ A CLI tool to better manage package updates. Built natively in Go for Windows.
 
 Patchwork automatically detects which package managers are installed on your system and queries them in parallel:
 
-| Manager | `-m` / `--manager` Flag | Underlying Check Command | Underlying Upgrade Command |
-| :--- | :--- | :--- | :--- |
-| **Winget** | `winget` | `winget upgrade` | `winget upgrade --id <id> --exact` |
-| **Scoop** | `scoop` | `scoop update` + `scoop status` | `scoop update <id>` |
-| **Chocolatey** | `choco` (or `chocolatey`) | `choco outdated --limit-output` | `choco upgrade <id> -y --no-progress` |
-| **npm (Global)** | `npm` | `npm outdated -g --json` | `npm install -g <id>@latest` |
-| **.NET Tools (Global)** | `dotnet` (or `dotnet-tool`) | `dotnet tool list -g` + concurrent NuGet search | `dotnet tool update -g <id>` |
-| **uv Python Tools** | `uv` (or `uv-tool`) | `uv tool list` + concurrent PyPI check | `uv tool upgrade <id>` |
-| **Rust Cargo Crates** | `cargo` (or `rust`) | `cargo install --list` + concurrent crates.io check | `cargo install <id>` |
-| **PowerShell Modules** | `psresource` (or `powershell`) | `Get-InstalledPSResource` + `Find-PSResource` | `Update-PSResource -Name <id>` |
+| Manager | Platform | `-m` / `--manager` Flag | Underlying Check Command | Underlying Upgrade Command |
+| :--- | :--- | :--- | :--- | :--- |
+| **Homebrew** | macOS / Linux | `brew` (or `homebrew`) | `brew outdated --json=v2` | `brew upgrade <id>` |
+| **Winget** | Windows | `winget` | `winget upgrade` | `winget upgrade --id <id> --exact` |
+| **Scoop** | Windows | `scoop` | `scoop update` + `scoop status` | `scoop update <id>` |
+| **Chocolatey** | Windows | `choco` (or `chocolatey`) | `choco outdated --limit-output` | `choco upgrade <id> -y --no-progress` |
+| **npm (Global)** | Cross-Platform | `npm` | `npm outdated -g --json` | `npm install -g <id>@latest` |
+| **.NET Tools (Global)** | Cross-Platform | `dotnet` (or `dotnet-tool`) | `dotnet tool list -g` + concurrent NuGet search | `dotnet tool update -g <id>` |
+| **uv Python Tools** | Cross-Platform | `uv` (or `uv-tool`) | `uv tool list` + concurrent PyPI check | `uv tool upgrade <id>` |
+| **Rust Cargo Crates** | Cross-Platform | `cargo` (or `rust`) | `cargo install --list` + concurrent crates.io check | `cargo install <id>` |
+| **PowerShell Modules** | Windows | `psresource` (or `powershell`) | `Get-InstalledPSResource` + `Find-PSResource` | `Update-PSResource -Name <id>` |
 
 ## Installation
 
@@ -76,6 +77,7 @@ pw check --by-manager
 
 **Check updates for a specific package manager only:**
 ```powershell
+pw check -m brew
 pw check -m winget
 pw check --manager scoop
 pw check -m npm
@@ -231,7 +233,7 @@ pw status
 
 ### 6. Cache & Old Version Cleanup (`pw cleanup` / `pw clean`)
 
-Remove old package versions and prune download caches across installed managers (`scoop`, `npm`, `uv`), as well as Patchwork's temporary completion cache:
+Remove old package versions and prune download caches across installed managers (`brew`, `scoop`, `npm`, `uv`), as well as Patchwork's temporary completion cache:
 
 ```powershell
 # Clean up all supported managers
@@ -240,6 +242,7 @@ pw cleanup
 pw clean
 
 # Clean up a specific package manager only
+pw cleanup -m brew
 pw cleanup -m scoop
 pw cleanup -m npm
 pw cleanup -m uv

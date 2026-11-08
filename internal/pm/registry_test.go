@@ -245,6 +245,7 @@ func TestValidateID_PerManager(t *testing.T) {
 		"uv":         ValidateUvID,
 		"dotnet":     ValidateDotnetID,
 		"psresource": ValidatePSResourceID,
+		"brew":       ValidateBrewID,
 		"generic":    ValidateGenericID,
 	}
 
@@ -280,6 +281,12 @@ func TestValidateID_PerManager(t *testing.T) {
 		{"dotnet", "Microsoft.DotNet.Watcher.Tool"},
 		{"psresource", "PSReadLine"},
 		{"psresource", "Microsoft.PowerShell.PSResourceGet"},
+		{"brew", "wget"},
+		{"brew", "node@20"},
+		{"brew", "homebrew/cask/visual-studio-code"},
+		{"brew", "gtk+3"},
+		{"brew", "hashicorp/tap/terraform"},
+		{"brew", "font-fira-code"},
 	}
 
 	for _, tc := range validCases {

@@ -21,7 +21,13 @@ func TestDoctorCmd(t *testing.T) {
 		t.Fatalf("unexpected error on doctor: %v", err)
 	}
 	out := buf.String()
-	for _, expected := range []string{"Configuration:", "Package Managers:", "winget", "scoop", "choco", "npm", "dotnet", "uv", "cargo", "psresource"} {
+	expectedManagers := []string{"Configuration:", "Package Managers:", "npm", "dotnet", "uv", "cargo"}
+	if runtime.GOOS == "windows" {
+		expectedManagers = append(expectedManagers, "winget", "scoop", "choco", "psresource")
+	} else {
+		expectedManagers = append(expectedManagers, "brew")
+	}
+	for _, expected := range expectedManagers {
 		if !strings.Contains(out, expected) {
 			t.Errorf("expected doctor output to contain %q, got:\n%s", expected, out)
 		}
@@ -82,6 +88,34 @@ func TestDoctorCmd_WarnsOnDuplicatePWOnPath(t *testing.T) {
 	}
 	out := buf.String()
 	if !strings.Contains(out, "Warning: Multiple pw installations found on PATH") {
-		t.Errorf("expected warning about multiple pw installations, got:\n%s", out)
+		t.Errorf("expected warning about multiple pw installations, got: %s", out)
+	}
+}
+
+func TestGetDefaultRegistryForOS(t *testing.T) {
+	winReg := getDefaultRegistryForOS("windows")
+	winNames := winReg.ManagerNames()
+	for _, expected := range []string{"winget", "scoop", "choco", "psresource", "npm", "dotnet", "uv", "cargo"} {
+		if _, ok := winReg.GetManager(expected); !ok {
+			t.Errorf("expected windows registry to contain %s, got: %v", expected, winNames)
+		}
+	}
+	if _, ok := winReg.GetManager("brew"); ok {
+		t.Errorf("expected windows registry NOT to contain brew")
+	}
+
+	for _, osName := range []string{"darwin", "linux"} {
+		unixReg := getDefaultRegistryForOS(osName)
+		unixNames := unixReg.ManagerNames()
+		for _, expected := range []string{"brew", "npm", "dotnet", "uv", "cargo"} {
+			if _, ok := unixReg.GetManager(expected); !ok {
+				t.Errorf("expected %s registry to contain %s, got: %v", osName, expected, unixNames)
+			}
+		}
+		for _, excluded := range []string{"winget", "scoop", "choco", "psresource"} {
+			if _, ok := unixReg.GetManager(excluded); ok {
+				t.Errorf("expected %s registry NOT to contain %s", osName, excluded)
+			}
+		}
 	}
 }

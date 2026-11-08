@@ -16,6 +16,7 @@ var (
 	uvIDRe         = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._\-]{0,253}[A-Za-z0-9])?$`)
 	dotnetIDRe     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-]{0,255}$`)
 	psresourceIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-]{0,255}$`)
+	brewIDRe       = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_\-.+]*/)*[A-Za-z0-9][A-Za-z0-9_\-.@+]{0,255}$`)
 )
 
 func checkCommonID(id string) error {
@@ -88,6 +89,11 @@ func ValidateUvID(id string) error {
 // ValidateDotnetID validates a .NET global tool NuGet package identifier.
 func ValidateDotnetID(id string) error {
 	return validateWithPattern(id, dotnetIDRe)
+}
+
+// ValidateBrewID validates a Homebrew formula or cask identifier.
+func ValidateBrewID(id string) error {
+	return validateWithPattern(id, brewIDRe)
 }
 
 // ValidatePSResourceID validates a PowerShell PSResource module identifier.
