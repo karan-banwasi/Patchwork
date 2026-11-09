@@ -1,0 +1,10 @@
+[
+  {
+    "name": "VLC media player",
+    "id": "VideoLAN.VLC",
+    "version": "3.0.18",
+    "available_version": "3.0.20",
+    "source": "winget",
+    "manager": "winget"
+  }
+]

@@ -42,7 +42,8 @@ func (m *mockAdversarialManager) UpgradePackage(ctx context.Context, id string) 
 func (m *mockAdversarialManager) ValidateID(id string) error { return nil }
 
 type jsonCheckOutput struct {
-	Updates []struct {
+	SchemaVersion string `json:"schema_version,omitempty"`
+	Updates       []struct {
 		Name             string `json:"name"`
 		ID               string `json:"id"`
 		Version          string `json:"version"`

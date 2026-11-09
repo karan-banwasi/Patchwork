@@ -18,6 +18,7 @@ type checkOptions struct {
 	quiet         bool
 	includePinned bool
 	noRefresh     bool
+	offline       bool
 	timeout       time.Duration
 }
 
@@ -33,6 +34,11 @@ func newCheckCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			errOut := cmd.ErrOrStderr()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
+
+			if opts.offline {
+				opts.noRefresh = true
+				registry.SetOffline(true)
+			}
 
 			if opts.timeout > 0 {
 				registry.FetchTimeout = opts.timeout
@@ -93,9 +99,10 @@ func newCheckCmd() *cobra.Command {
 					Manager          string `json:"manager"`
 				}
 				type jsonOutput struct {
-					Updates []jsonPackage `json:"updates"`
-					Count   int           `json:"count"`
-					Pinned  int           `json:"pinned_skipped,omitempty"`
+					SchemaVersion string        `json:"schema_version"`
+					Updates       []jsonPackage `json:"updates"`
+					Count         int           `json:"count"`
+					Pinned        int           `json:"pinned_skipped,omitempty"`
 				}
 				outList := make([]jsonPackage, 0, len(updates))
 				for _, u := range updates {
@@ -110,9 +117,10 @@ func newCheckCmd() *cobra.Command {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(jsonOutput{
-					Updates: outList,
-					Count:   len(outList),
-					Pinned:  pinnedCount,
+					SchemaVersion: "1.0.0",
+					Updates:       outList,
+					Count:         len(outList),
+					Pinned:        pinnedCount,
 				})
 			}
 
@@ -179,6 +187,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.quiet, "quiet", "q", false, "Output only tab-separated package IDs and versions")
 	cmd.Flags().BoolVar(&opts.includePinned, "include-pinned", false, "Include pinned packages in the check output")
 	cmd.Flags().BoolVar(&opts.noRefresh, "no-refresh", false, "Skip bucket/repository refresh before checking updates")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access and check using only local caches")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-manager timeout when querying updates (0 uses manager defaults)")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
 

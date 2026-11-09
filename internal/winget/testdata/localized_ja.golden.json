@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Git",
+    "id": "Git.Git",
+    "version": "2.45.0",
+    "available_version": "2.46.0",
+    "source": "winget",
+    "manager": "winget"
+  }
+]

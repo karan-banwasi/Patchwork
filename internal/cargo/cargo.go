@@ -14,23 +14,47 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/httputil"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
+)
+
+var (
+	_ pm.Manager             = (*CargoManager)(nil)
+	_ pm.WarningFetcher      = (*CargoManager)(nil)
+	_ pm.OfflineConfigurable = (*CargoManager)(nil)
+	_ pm.NetworkDependent    = (*CargoManager)(nil)
 )
 
 // CargoManager implements the pm.Manager interface for Rust global binaries installed via `cargo install`.
 type CargoManager struct {
-	runner pm.Runner
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	runner  pm.Runner
+	client  *http.Client
+	offline bool
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 func NewCargoManager() *CargoManager {
 	return &CargoManager{
 		runner: pm.ExecRunner{},
+		client: httputil.NewClient(httputil.WithTimeout(10 * time.Second)),
 		stdout: io.Discard,
 		stderr: io.Discard,
 	}
+}
+
+func (c *CargoManager) SetOffline(offline bool) {
+	c.offline = offline
+}
+
+func (c *CargoManager) RequiresNetwork() bool {
+	return true
+}
+
+func (c *CargoManager) SetHTTPClient(client *http.Client) {
+	c.client = client
 }
 
 func (c *CargoManager) Name() string {
@@ -174,7 +198,16 @@ func (c *CargoManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]p
 		return []pm.PackageUpdate{}, nil, nil
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second}
+	if c.offline {
+		return []pm.PackageUpdate{}, []error{
+			fmt.Errorf("[%s] offline mode: skipping crates.io remote checks", c.Name()),
+		}, nil
+	}
+
+	client := c.client
+	if client == nil {
+		client = httputil.NewClient(httputil.WithTimeout(10 * time.Second))
+	}
 	var (
 		updates    []pm.PackageUpdate
 		lookupErrs []error
@@ -197,7 +230,7 @@ func (c *CargoManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]p
 				mu.Unlock()
 				return
 			}
-			if latest != "" && latest != cr.Version {
+			if latest != "" && version.IsUpgrade("cargo", cr.Version, latest) {
 				cr.AvailableVersion = latest
 				mu.Lock()
 				updates = append(updates, cr)

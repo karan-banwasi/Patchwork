@@ -549,3 +549,83 @@ func TestRegistry_FetchUpdates_WarningFetcher(t *testing.T) {
 		t.Errorf("expected lookup warning, got %v", warnings)
 	}
 }
+
+func TestRegistry_FetchUpdates_DowngradeFiltered(t *testing.T) {
+	m1 := &mockManager{
+		name:      "generic",
+		available: true,
+		updates: []PackageUpdate{
+			{Name: "real-upgrade", Id: "real-upgrade", Version: "1.0.0", AvailableVersion: "1.1.0", ManagerName: "generic"},
+			{Name: "downgrade-pkg", Id: "downgrade-pkg", Version: "2.0.0", AvailableVersion: "1.9.0", ManagerName: "generic"},
+			{Name: "same-ver-pkg", Id: "same-ver-pkg", Version: "3.0.0", AvailableVersion: "3.0.0", ManagerName: "generic"},
+		},
+	}
+
+	reg := NewRegistry(m1)
+	updates, _, err := reg.FetchUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update after filtering downgrades/same versions, got %d: %+v", len(updates), updates)
+	}
+	if updates[0].Id != "real-upgrade" {
+		t.Errorf("expected real-upgrade, got %s", updates[0].Id)
+	}
+}
+
+type mockNetworkManager struct {
+	mockManager
+	requiresNetwork bool
+	offline         bool
+}
+
+func (m *mockNetworkManager) RequiresNetwork() bool   { return m.requiresNetwork }
+func (m *mockNetworkManager) SetOffline(offline bool) { m.offline = offline }
+
+func TestRegistry_OfflineMode(t *testing.T) {
+	mLocal := &mockManager{
+		name:      "winget",
+		available: true,
+		updates: []PackageUpdate{
+			{Name: "git", Id: "Git.Git", Version: "2.40.0", AvailableVersion: "2.41.0", ManagerName: "winget"},
+		},
+	}
+	mNet := &mockNetworkManager{
+		mockManager: mockManager{
+			name:      "cargo",
+			available: true,
+			updates: []PackageUpdate{
+				{Name: "ripgrep", Id: "ripgrep", Version: "13.0.0", AvailableVersion: "14.0.0", ManagerName: "cargo"},
+			},
+		},
+		requiresNetwork: true,
+	}
+
+	reg := NewRegistry(mLocal, mNet)
+	reg.SetOffline(true)
+
+	if !reg.Offline || !reg.SkipRefresh || !mNet.offline {
+		t.Errorf("expected offline mode and SkipRefresh=true to propagate")
+	}
+
+	updates, warnings, err := reg.FetchUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 || updates[0].Id != "Git.Git" {
+		t.Errorf("expected only local winget update, got %+v", updates)
+	}
+
+	foundWarning := false
+	for _, w := range warnings {
+		if strings.Contains(w.Error(), "[cargo] offline mode") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected cargo offline skip warning, got: %v", warnings)
+	}
+}

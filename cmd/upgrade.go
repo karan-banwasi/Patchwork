@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
-	"github.com/AlecAivazis/survey/v2"
 	"github.com/karan-banwasi/patchwork/internal/config"
+	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 
 type upgradeOptions struct {
 	all              bool
+	json             bool
 	manager          string
 	byManager        bool
 	dryRun           bool
@@ -23,6 +25,7 @@ type upgradeOptions struct {
 	acceptAgreements bool
 	trustRepository  bool
 	noRefresh        bool
+	offline          bool
 	timeout          time.Duration
 }
 
@@ -90,6 +93,9 @@ func newUpgradeCmd() *cobra.Command {
 		Long:              `Upgrade one or more specific packages by providing their IDs, or upgrade all packages using the --all flag.`,
 		ValidArgsFunction: completeAvailablePackageIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.json && !opts.all && len(args) == 0 {
+				return exitcodes.New(exitcodes.ExitGeneralError, "--json requires either --all or explicit package IDs (interactive selection is disabled in JSON mode)")
+			}
 			if opts.all && len(args) > 0 {
 				return fmt.Errorf("--all and a package ID are mutually exclusive")
 			}
@@ -110,6 +116,11 @@ func newUpgradeCmd() *cobra.Command {
 				AcceptAgreements: opts.acceptAgreements,
 				TrustRepository:  opts.trustRepository,
 			})
+			if opts.offline {
+				opts.noRefresh = true
+				registry.SetOffline(true)
+			}
+
 			if opts.timeout > 0 {
 				registry.FetchTimeout = opts.timeout
 			}
@@ -130,9 +141,13 @@ func newUpgradeCmd() *cobra.Command {
 						return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
 					}
 					filter = append(filter, opts.manager)
-					fmt.Fprintf(out, "Fetching available updates for %s...\n", mgr.Name())
+					if !opts.json {
+						fmt.Fprintf(out, "Fetching available updates for %s...\n", mgr.Name())
+					}
 				} else {
-					fmt.Fprintln(out, "Fetching available updates across package managers...")
+					if !opts.json {
+						fmt.Fprintln(out, "Fetching available updates across package managers...")
+					}
 				}
 
 				updates, warnings, err := registry.FetchUpdates(cmd.Context(), filter...)
@@ -148,6 +163,10 @@ func newUpgradeCmd() *cobra.Command {
 					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
 				}
 				if len(allowed) == 0 {
+					if opts.json {
+						emptySummary := upgrade.NewSummary(skipped)
+						return emptySummary.RenderJSON(out, false)
+					}
 					if len(skipped) > 0 {
 						fmt.Fprintf(out, "No packages to upgrade (%d pinned package(s) skipped).\n", len(skipped))
 					} else {
@@ -177,12 +196,18 @@ func newUpgradeCmd() *cobra.Command {
 						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
 					}
 					if len(allowed) == 0 {
-						upgrade.NewSummary(skipped).Render(out)
+						if opts.json {
+							_ = upgrade.NewSummary(skipped).RenderJSON(out, false)
+						} else {
+							upgrade.NewSummary(skipped).Render(out)
+						}
 						return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
 					}
 					plan = upgrade.NewPlan(registry, allowed, skipped)
 				} else {
-					fmt.Fprintf(out, "Locating %d package(s) across package managers...\n", len(args))
+					if !opts.json {
+						fmt.Fprintf(out, "Locating %d package(s) across package managers...\n", len(args))
+					}
 					updates, warnings, err := registry.FetchUpdates(cmd.Context())
 					if err != nil {
 						return fmt.Errorf("failed to check available updates: %w", err)
@@ -228,15 +253,17 @@ func newUpgradeCmd() *cobra.Command {
 					}
 					allSkipped := append(notFoundSkipped, pinnedSkipped...)
 					if len(allowed) == 0 {
-						upgrade.NewSummary(allSkipped).Render(out)
+						if opts.json {
+							_ = upgrade.NewSummary(allSkipped).RenderJSON(out, false)
+						} else {
+							upgrade.NewSummary(allSkipped).Render(out)
+						}
 						return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
 					}
 					plan = upgrade.NewPlan(registry, allowed, allSkipped)
 				}
 			} else {
 				// Interactive selection mode
-				initSurveyTemplates()
-
 				var filter []string
 				if opts.manager != "" {
 					mgr, exists := registry.GetManager(opts.manager)
@@ -297,61 +324,39 @@ func newUpgradeCmd() *cobra.Command {
 						}
 						fmt.Fprintf(out, "\n--- %s (%d available update%s) ---\n", mgrName, len(pkgs), pluralSuffix)
 
-						var options []string
-						optMap := make(map[string]pm.PackageUpdate)
-						maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(pkgs)
-
-						for _, pkg := range pkgs {
-							label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
-							options = append(options, label)
-							optMap[label] = pkg
-						}
-
-						var selected []string
-						prompt := &survey.MultiSelect{
-							Message: fmt.Sprintf("Select %s packages to upgrade (Space to select, Enter to confirm/skip):", mgrName),
-							Options: options,
-						}
-						err := survey.AskOne(prompt, &selected)
+						selected, err := defaultMultiSelector.Select(
+							fmt.Sprintf("Select %s packages to upgrade (e.g. '1, 3-5', 'all', Enter to skip):", mgrName),
+							pkgs,
+						)
 						if err != nil {
 							fmt.Fprintf(out, "Selection skipped for %s.\n", mgrName)
 							continue
 						}
-						for _, opt := range selected {
-							selectedPackages = append(selectedPackages, optMap[opt])
-						}
+						selectedPackages = append(selectedPackages, selected...)
 					}
 				} else {
 					// Unified interactive selection
-					var options []string
-					optionToUpdate := make(map[string]pm.PackageUpdate)
-					maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(allowed)
-
-					for _, pkg := range allowed {
-						label := formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
-						options = append(options, label)
-						optionToUpdate[label] = pkg
-					}
-
-					var selectedOptions []string
-					prompt := &survey.MultiSelect{
-						Message: "Select packages to upgrade (Space to select, Enter to submit, submit empty to cancel):",
-						Options: options,
-					}
-					err = survey.AskOne(prompt, &selectedOptions)
+					selected, err := defaultMultiSelector.Select(
+						"Select packages to upgrade (e.g. '1, 3-5', 'all', Enter to submit empty/cancel):",
+						allowed,
+					)
 					if err != nil {
-						fmt.Fprintln(out, "Selection canceled or failed.")
-						return nil
+						if errors.Is(err, ErrSelectionCanceled) {
+							if !opts.json {
+								fmt.Fprintln(out, "Selection canceled.")
+							}
+							return exitcodes.Wrap(exitcodes.ExitCanceled, ErrSelectionCanceled)
+						}
+						return fmt.Errorf("interactive selection failed: %w", err)
 					}
-
-					for _, opt := range selectedOptions {
-						selectedPackages = append(selectedPackages, optionToUpdate[opt])
-					}
+					selectedPackages = selected
 				}
 
 				if len(selectedPackages) == 0 {
-					fmt.Fprintln(out, "No packages selected. Canceled.")
-					return nil
+					if !opts.json {
+						fmt.Fprintln(out, "No packages selected. Canceled.")
+					}
+					return exitcodes.Wrap(exitcodes.ExitCanceled, ErrSelectionCanceled)
 				}
 
 				plan = upgrade.NewPlan(registry, selectedPackages, nil)
@@ -361,9 +366,15 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 
-			maybePrintWingetAgreementsNotice(out, plan.Targets, opts.acceptAgreements)
+			if !opts.json {
+				maybePrintWingetAgreementsNotice(out, plan.Targets, opts.acceptAgreements)
+			}
 
 			if opts.dryRun {
+				summary := plan.DryRunSummary()
+				if opts.json {
+					return summary.RenderJSON(out, true)
+				}
 				if len(args) > 0 && opts.manager != "" {
 					for _, pkg := range plan.Targets {
 						fmt.Fprintf(out, "[Dry Run] Would upgrade package %s using %s.\n", pkg.Id, opts.manager)
@@ -377,27 +388,39 @@ func newUpgradeCmd() *cobra.Command {
 				} else {
 					fmt.Fprintf(out, "\n[Dry Run] Would upgrade %d selected package(s):\n", len(plan.Targets))
 				}
-				summary := plan.DryRunSummary()
 				summary.Render(out)
 				return nil
 			}
 
-			if opts.all || len(args) > 0 {
-				fmt.Fprintf(out, "\nUpgrading %d package(s)...\n", len(plan.Targets))
+			var execOut io.Writer = out
+			if opts.json {
+				execOut = io.Discard
 			} else {
-				fmt.Fprintf(out, "\nUpgrading %d packages...\n", len(plan.Targets))
+				if opts.all || len(args) > 0 {
+					fmt.Fprintf(out, "\nUpgrading %d package(s)...\n", len(plan.Targets))
+				} else {
+					fmt.Fprintf(out, "\nUpgrading %d packages...\n", len(plan.Targets))
+				}
 			}
-			executor := upgrade.NewExecutor(registry, out, errOut)
+			executor := upgrade.NewExecutor(registry, execOut, errOut)
 			summary := executor.Execute(cmd.Context(), plan)
+			if opts.json {
+				jsonErr := summary.RenderJSON(out, false)
+				if summary.HasFailures() {
+					return exitcodes.New(exitcodes.ExitUpgradeFailure, "one or more package upgrades failed")
+				}
+				return jsonErr
+			}
 			summary.Render(out)
 			if summary.HasFailures() {
-				return fmt.Errorf("one or more package upgrades failed")
+				return exitcodes.New(exitcodes.ExitUpgradeFailure, "one or more package upgrades failed")
 			}
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVarP(&opts.all, "all", "a", false, "Upgrade all available packages")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output upgrade results as JSON")
 	cmd.Flags().StringVarP(&opts.manager, "manager", "m", "", "Target a specific package manager")
 	cmd.Flags().BoolVar(&opts.byManager, "by-manager", false, "Upgrade packages grouped by package manager")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "Preview packages that would be upgraded without installing")
@@ -406,6 +429,7 @@ func newUpgradeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.acceptAgreements, "accept-agreements", true, "Automatically accept winget source and package license agreements")
 	cmd.Flags().BoolVar(&opts.trustRepository, "trust-repository", false, "Pass -TrustRepository when updating PowerShell PSResource modules")
 	cmd.Flags().BoolVar(&opts.noRefresh, "no-refresh", false, "Skip bucket/repository refresh before checking updates")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access and upgrade using only local caches")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-manager timeout when querying updates (0 uses manager defaults)")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
 
@@ -437,31 +461,4 @@ func orderSelectedPackagesWithRegistry(reg *pm.Registry, pkgs []pm.PackageUpdate
 // or terminal is closed by its installer.
 func orderSelectedPackages(pkgs []pm.PackageUpdate) []pm.PackageUpdate {
 	return orderSelectedPackagesWithRegistry(getDefaultRegistry(), pkgs)
-}
-
-func initSurveyTemplates() {
-	survey.MultiSelectQuestionTemplate = `
-{{- define "option"}}
-    {{- if eq .SelectedIndex .CurrentIndex }}{{color .Config.Icons.SelectFocus.Format }}{{ .Config.Icons.SelectFocus.Text }}{{color "reset"}}{{else}} {{end}}
-    {{- if index .Checked .CurrentOpt.Index }}{{color .Config.Icons.MarkedOption.Format }} {{ .Config.Icons.MarkedOption.Text }} {{else}}{{color .Config.Icons.UnmarkedOption.Format }} {{ .Config.Icons.UnmarkedOption.Text }} {{end}}
-    {{- color "reset"}}
-    {{- " "}}{{- .CurrentOpt.Value}}{{ if ne ($.GetDescription .CurrentOpt) "" }} - {{color "cyan"}}{{ $.GetDescription .CurrentOpt }}{{color "reset"}}{{end}}
-{{end}}
-{{- if .ShowHelp }}{{- color .Config.Icons.Help.Format }}{{ .Config.Icons.Help.Text }} {{ .Help }}{{color "reset"}}{{"\n"}}{{end}}
-{{- color .Config.Icons.Question.Format }}{{ .Config.Icons.Question.Text }} {{color "reset"}}
-{{- color "default+hb"}}{{ .Message }}{{ .FilterMessage }}{{color "reset"}}
-{{- if .ShowAnswer}}
-  {{- range $ix, $opt := .Options}}
-    {{- if index $.Checked $ix}}
-      {{- "\n  "}}{{- color "cyan"}}{{$opt}}{{color "reset"}}
-    {{- end}}
-  {{- end}}
-  {{- "\n"}}
-{{- else }}
-	{{- "  "}}{{- color "cyan"}}[Use arrows to move, space to select,{{- if not .Config.RemoveSelectAll }} <right> to all,{{end}}{{- if not .Config.RemoveSelectNone }} <left> to none,{{end}} type to filter{{- if and .Help (not .ShowHelp)}}, {{ .Config.HelpInput }} for more help{{end}}]{{color "reset"}}
-  {{- "\n"}}
-  {{- range $ix, $option := .PageEntries}}
-    {{- template "option" $.IterateOption $ix $option}}
-  {{- end}}
-{{- end}}`
 }

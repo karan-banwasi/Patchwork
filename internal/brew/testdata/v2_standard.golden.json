@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Google Chrome",
+    "id": "google-chrome",
+    "version": "122.0.6261.112",
+    "available_version": "123.0.6312.58",
+    "source": "cask",
+    "manager": "brew"
+  },
+  {
+    "name": "node@20",
+    "id": "node@20",
+    "version": "20.10.0",
+    "available_version": "20.11.0",
+    "source": "homebrew",
+    "manager": "brew"
+  },
+  {
+    "name": "Visual Studio Code",
+    "id": "visual-studio-code",
+    "version": "1.85.0",
+    "available_version": "1.86.0",
+    "source": "cask",
+    "manager": "brew"
+  },
+  {
+    "name": "wget",
+    "id": "wget",
+    "version": "1.21.3",
+    "available_version": "1.21.4",
+    "source": "homebrew",
+    "manager": "brew"
+  }
+]

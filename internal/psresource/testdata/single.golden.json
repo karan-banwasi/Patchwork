@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Terminal-Icons",
+    "id": "Terminal-Icons",
+    "version": "0.10.0",
+    "available_version": "0.11.0",
+    "source": "PSGallery",
+    "manager": "psresource"
+  }
+]

@@ -236,7 +236,70 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 			continue
 		}
 
-		// If the manager implements BulkUpgrader, batch consecutive packages
+		// Check for DetailedBulkUpgrader first to report per-package results
+		if detailed, ok := mgr.(pm.DetailedBulkUpgrader); ok {
+			var batchPkgs []pm.PackageUpdate
+			var batchIDs []string
+			j := i
+			for ; j < len(pkgs) && strings.EqualFold(pkgs[j].ManagerName, pkg.ManagerName); j++ {
+				if vErr := mgr.ValidateID(pkgs[j].Id); vErr != nil {
+					break
+				}
+				batchPkgs = append(batchPkgs, pkgs[j])
+				batchIDs = append(batchIDs, pkgs[j].Id)
+			}
+			if len(batchPkgs) > 1 {
+				fmt.Fprintf(e.Stdout, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
+				start := time.Now()
+				bulkResults, err := detailed.UpgradePackagesDetailed(ctx, batchIDs)
+				dur := time.Since(start) / time.Duration(len(batchPkgs))
+				if err != nil && len(bulkResults) == 0 {
+					for _, bp := range batchPkgs {
+						fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", bp.Id, err)
+						results = append(results, Result{
+							Package:  bp,
+							Status:   StatusFailed,
+							Duration: dur,
+							Error:    err,
+						})
+					}
+				} else {
+					resMap := make(map[string]pm.BulkPackageResult)
+					for _, br := range bulkResults {
+						resMap[strings.ToLower(br.ID)] = br
+					}
+					for _, bp := range batchPkgs {
+						br, found := resMap[strings.ToLower(bp.Id)]
+						if found && br.Succeeded {
+							fmt.Fprintf(e.Stdout, "Successfully upgraded %s\n", bp.Id)
+							results = append(results, Result{
+								Package:  bp,
+								Status:   StatusSucceeded,
+								Duration: dur,
+							})
+						} else {
+							pkgErr := err
+							if found && br.Error != nil {
+								pkgErr = br.Error
+							} else if pkgErr == nil {
+								pkgErr = fmt.Errorf("package upgrade failed")
+							}
+							fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", bp.Id, pkgErr)
+							results = append(results, Result{
+								Package:  bp,
+								Status:   StatusFailed,
+								Duration: dur,
+								Error:    pkgErr,
+							})
+						}
+					}
+				}
+				i = j - 1
+				continue
+			}
+		}
+
+		// Fallback for standard BulkUpgrader
 		if bulk, ok := mgr.(pm.BulkUpgrader); ok {
 			var batchPkgs []pm.PackageUpdate
 			var batchIDs []string

@@ -13,9 +13,16 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
+var (
+	_ pm.Manager             = (*PSResourceManager)(nil)
+	_ pm.OfflineConfigurable = (*PSResourceManager)(nil)
+	_ pm.NetworkDependent    = (*PSResourceManager)(nil)
+)
+
 // PSResourceManager implements the pm.Manager interface for PowerShell modules via Microsoft.PowerShell.PSResourceGet.
 type PSResourceManager struct {
 	TrustRepository bool
+	offline         bool
 	runner          pm.Runner
 	stdin           io.Reader
 	stdout          io.Writer
@@ -28,6 +35,14 @@ func NewPSResourceManager() *PSResourceManager {
 		stdout: io.Discard,
 		stderr: io.Discard,
 	}
+}
+
+func (p *PSResourceManager) SetOffline(offline bool) {
+	p.offline = offline
+}
+
+func (p *PSResourceManager) RequiresNetwork() bool {
+	return true
 }
 
 func (p *PSResourceManager) Name() string {
@@ -139,6 +154,10 @@ try {
 `
 
 func (p *PSResourceManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	if p.offline {
+		return []pm.PackageUpdate{}, nil
+	}
+
 	exe, err := pwshPath()
 	if err != nil {
 		return nil, err

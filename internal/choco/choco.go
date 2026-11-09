@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
 var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
@@ -169,7 +170,7 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 				current := strings.TrimSpace(parts[1])
 				available := strings.TrimSpace(parts[2])
 
-				if name != "" && current != "" && available != "" && pm.ValidateChocoID(name) == nil {
+				if name != "" && current != "" && available != "" && pm.ValidateChocoID(name) == nil && version.IsUpgrade("choco", current, available) {
 					updates = append(updates, pm.PackageUpdate{
 						Name:             name,
 						Id:               name,
@@ -189,7 +190,7 @@ func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 			if len(fields) >= 4 && strings.EqualFold(fields[3], "true") {
 				continue
 			}
-			if pm.ValidateChocoID(fields[0]) == nil {
+			if pm.ValidateChocoID(fields[0]) == nil && version.IsUpgrade("choco", fields[1], fields[2]) {
 				updates = append(updates, pm.PackageUpdate{
 					Name:             fields[0],
 					Id:               fields[0],

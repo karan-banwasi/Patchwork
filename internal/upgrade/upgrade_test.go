@@ -269,3 +269,54 @@ func TestExecutor_Execute_BulkFailure(t *testing.T) {
 		t.Errorf("expected 2 failures on bulk error, got: %+v", summary)
 	}
 }
+
+type mockDetailedBulkUpgradeManager struct {
+	mockUpgradeManager
+	detailedResults []pm.BulkPackageResult
+	detailedErr     error
+}
+
+func (m *mockDetailedBulkUpgradeManager) UpgradePackagesDetailed(ctx context.Context, ids []string) ([]pm.BulkPackageResult, error) {
+	m.bulk = append(m.bulk, ids...)
+	return m.detailedResults, m.detailedErr
+}
+
+func TestExecutor_Execute_DetailedBulk(t *testing.T) {
+	pkgErr := errors.New("install error 1603")
+	mChoco := &mockDetailedBulkUpgradeManager{
+		mockUpgradeManager: mockUpgradeManager{
+			name:      "choco",
+			available: true,
+		},
+		detailedResults: []pm.BulkPackageResult{
+			{ID: "p1", Succeeded: true},
+			{ID: "p2", Succeeded: false, Error: pkgErr},
+		},
+	}
+	reg := pm.NewRegistry(mChoco)
+
+	executor := NewExecutor(reg, nil, nil)
+	plan := &Plan{
+		Targets: []pm.PackageUpdate{
+			{Id: "p1", ManagerName: "choco"},
+			{Id: "p2", ManagerName: "choco"},
+		},
+	}
+
+	summary := executor.Execute(context.Background(), plan)
+	if summary.Succeeded != 1 {
+		t.Errorf("expected 1 succeeded, got %d", summary.Succeeded)
+	}
+	if summary.Failed != 1 {
+		t.Errorf("expected 1 failed, got %d", summary.Failed)
+	}
+	if len(summary.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(summary.Results))
+	}
+	if summary.Results[0].Status != StatusSucceeded {
+		t.Errorf("expected p1 to succeed, got %s", summary.Results[0].Status)
+	}
+	if summary.Results[1].Status != StatusFailed || !errors.Is(summary.Results[1].Error, pkgErr) {
+		t.Errorf("expected p2 to fail with %v, got %v (%s)", pkgErr, summary.Results[1].Error, summary.Results[1].Status)
+	}
+}

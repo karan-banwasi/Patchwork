@@ -1,0 +1,7 @@
+Scoop is up to date.
+Updates are available for:
+
+Name      Installed Version Latest Version Missing dependencies
+----      ----------------- -------------- --------------------
+git       2.40.0            2.41.0
+neovim    0.8.3             0.9.0

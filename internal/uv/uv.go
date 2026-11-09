@@ -14,23 +14,47 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/httputil"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
+)
+
+var (
+	_ pm.Manager             = (*UvManager)(nil)
+	_ pm.WarningFetcher      = (*UvManager)(nil)
+	_ pm.OfflineConfigurable = (*UvManager)(nil)
+	_ pm.NetworkDependent    = (*UvManager)(nil)
 )
 
 // UvManager implements the pm.Manager interface for Python CLI tools managed by `uv tool`.
 type UvManager struct {
-	runner pm.Runner
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	runner  pm.Runner
+	client  *http.Client
+	offline bool
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 func NewUvManager() *UvManager {
 	return &UvManager{
 		runner: pm.ExecRunner{},
+		client: httputil.NewClient(httputil.WithTimeout(10 * time.Second)),
 		stdout: io.Discard,
 		stderr: io.Discard,
 	}
+}
+
+func (u *UvManager) SetOffline(offline bool) {
+	u.offline = offline
+}
+
+func (u *UvManager) RequiresNetwork() bool {
+	return true
+}
+
+func (u *UvManager) SetHTTPClient(client *http.Client) {
+	u.client = client
 }
 
 func (u *UvManager) Name() string {
@@ -180,7 +204,16 @@ func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.P
 		return []pm.PackageUpdate{}, nil, nil
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second}
+	if u.offline {
+		return []pm.PackageUpdate{}, []error{
+			fmt.Errorf("[%s] offline mode: skipping PyPI remote checks", u.Name()),
+		}, nil
+	}
+
+	client := u.client
+	if client == nil {
+		client = httputil.NewClient(httputil.WithTimeout(10 * time.Second))
+	}
 	var (
 		updates    []pm.PackageUpdate
 		lookupErrs []error
@@ -203,7 +236,7 @@ func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.P
 				mu.Unlock()
 				return
 			}
-			if latest != "" && latest != t.Version {
+			if latest != "" && version.IsUpgrade("uv", t.Version, latest) {
 				t.AvailableVersion = latest
 				mu.Lock()
 				updates = append(updates, t)

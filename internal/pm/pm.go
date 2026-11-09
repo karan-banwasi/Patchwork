@@ -65,6 +65,31 @@ type BulkUpgrader interface {
 	UpgradePackages(ctx context.Context, ids []string) error
 }
 
+// BulkPackageResult represents the upgrade result of an individual package in a bulk operation.
+type BulkPackageResult struct {
+	ID        string
+	Succeeded bool
+	Error     error
+}
+
+// DetailedBulkUpgrader is an optional interface implemented by managers that can upgrade
+// multiple packages in one batch and report individual per-package outcomes.
+type DetailedBulkUpgrader interface {
+	UpgradePackagesDetailed(ctx context.Context, ids []string) ([]BulkPackageResult, error)
+}
+
+// OfflineConfigurable is an optional interface implemented by package managers
+// that support operating in offline mode.
+type OfflineConfigurable interface {
+	SetOffline(offline bool)
+}
+
+// NetworkDependent is an optional interface implemented by package managers
+// that strictly require internet access to discover available package updates.
+type NetworkDependent interface {
+	RequiresNetwork() bool
+}
+
 // IOConfigurable is an optional interface implemented by managers that accept custom I/O streams.
 type IOConfigurable interface {
 	SetIO(stdin io.Reader, stdout, stderr io.Writer)

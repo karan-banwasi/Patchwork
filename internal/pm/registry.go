@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
 // DefaultFetchTimeout is the default maximum duration allowed for a single package manager to check for updates.
@@ -18,6 +20,7 @@ type Registry struct {
 	managers     []Manager
 	FetchTimeout time.Duration
 	SkipRefresh  bool
+	Offline      bool
 }
 
 // NewRegistry creates a new Registry populated with the provided managers.
@@ -48,6 +51,22 @@ func (r *Registry) ConfigureOptions(opts UpgradeOptions) {
 	for _, m := range r.managers {
 		if oc, ok := m.(OptionsConfigurable); ok {
 			oc.ConfigureOptions(opts)
+		}
+	}
+}
+
+// SetOffline configures offline mode on the registry and any registered managers implementing OfflineConfigurable.
+func (r *Registry) SetOffline(offline bool) {
+	if r == nil {
+		return
+	}
+	r.Offline = offline
+	if offline {
+		r.SkipRefresh = true
+	}
+	for _, m := range r.managers {
+		if oc, ok := m.(OfflineConfigurable); ok {
+			oc.SetOffline(offline)
 		}
 	}
 }
@@ -189,6 +208,17 @@ func (r *Registry) FetchUpdates(ctx context.Context, filter ...string) ([]Packag
 	ch := make(chan fetchResult, len(targetManagers))
 
 	for _, m := range targetManagers {
+		if r.Offline {
+			if nd, ok := m.(NetworkDependent); ok && nd.RequiresNetwork() {
+				ch <- fetchResult{
+					updates:  nil,
+					warnings: []error{fmt.Errorf("[%s] offline mode: skipping remote package update checks", m.Name())},
+					err:      nil,
+				}
+				continue
+			}
+		}
+
 		go func(mgr Manager) {
 			timeout := r.ManagerTimeout(mgr)
 			cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -258,6 +288,9 @@ func (r *Registry) FetchUpdates(ctx context.Context, filter ...string) ([]Packag
 			managerErrs = append(managerErrs, res.err)
 		} else {
 			for _, u := range res.updates {
+				if u.Version != "" && u.AvailableVersion != "" && !version.IsUpgrade(u.ManagerName, u.Version, u.AvailableVersion) {
+					continue
+				}
 				key := u.ManagerName + ":" + u.Id
 				if !seen[key] {
 					seen[key] = true

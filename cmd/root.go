@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +68,7 @@ func Execute() {
 
 	cmd := NewRootCmd()
 	err := cmd.ExecuteContext(ctx)
-	if err != nil {
-		os.Exit(1)
+	if err != nil || (ctx != nil && ctx.Err() != nil) {
+		os.Exit(exitcodes.Determine(ctx, err))
 	}
 }

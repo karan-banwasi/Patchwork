@@ -11,14 +11,23 @@ import (
 	"sync"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
+)
+
+var (
+	_ pm.Manager             = (*DotnetManager)(nil)
+	_ pm.WarningFetcher      = (*DotnetManager)(nil)
+	_ pm.OfflineConfigurable = (*DotnetManager)(nil)
+	_ pm.NetworkDependent    = (*DotnetManager)(nil)
 )
 
 // DotnetManager implements the pm.Manager interface for global .NET tools.
 type DotnetManager struct {
-	runner pm.Runner
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	runner  pm.Runner
+	offline bool
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 func NewDotnetManager() *DotnetManager {
@@ -27,6 +36,14 @@ func NewDotnetManager() *DotnetManager {
 		stdout: io.Discard,
 		stderr: io.Discard,
 	}
+}
+
+func (d *DotnetManager) SetOffline(offline bool) {
+	d.offline = offline
+}
+
+func (d *DotnetManager) RequiresNetwork() bool {
+	return true
 }
 
 func (d *DotnetManager) Name() string {
@@ -111,6 +128,12 @@ func (d *DotnetManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]
 		return []pm.PackageUpdate{}, nil, nil
 	}
 
+	if d.offline {
+		return []pm.PackageUpdate{}, []error{
+			fmt.Errorf("[%s] offline mode: skipping NuGet tool search", d.Name()),
+		}, nil
+	}
+
 	var (
 		updates    []pm.PackageUpdate
 		lookupErrs []error
@@ -139,7 +162,7 @@ func (d *DotnetManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]
 				return
 			}
 			latest := parseDotnetToolSearchLatest(sOut.String(), t.Id)
-			if latest != "" && latest != t.Version {
+			if latest != "" && version.IsUpgrade("dotnet", t.Version, latest) {
 				t.AvailableVersion = latest
 				mu.Lock()
 				updates = append(updates, t)

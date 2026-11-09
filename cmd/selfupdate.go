@@ -20,10 +20,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/httputil"
+	ver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +40,7 @@ type selfUpdateOptions struct {
 	force              bool
 	skipAttestation    bool
 	requireAttestation bool
+	offline            bool
 }
 
 type ghRelease struct {
@@ -103,35 +105,7 @@ type inTotoSubject struct {
 
 // isNewerVersion compares two semantic version tags (e.g. "v1.0.5" vs "v1.0.4").
 func isNewerVersion(current, latest string) bool {
-	if current == "" || current == "dev" {
-		return true
-	}
-	cParts := parseSemverParts(current)
-	lParts := parseSemverParts(latest)
-	for i := 0; i < 3; i++ {
-		if lParts[i] > cParts[i] {
-			return true
-		}
-		if lParts[i] < cParts[i] {
-			return false
-		}
-	}
-	return false
-}
-
-func parseSemverParts(v string) [3]int {
-	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
-	if idx := strings.IndexAny(v, "-+"); idx != -1 {
-		v = v[:idx]
-	}
-	parts := strings.Split(v, ".")
-	var res [3]int
-	for i := 0; i < len(parts) && i < 3; i++ {
-		if n, err := strconv.Atoi(parts[i]); err == nil {
-			res[i] = n
-		}
-	}
-	return res
+	return ver.IsUpgrade("selfupdate", current, latest)
 }
 
 // extractExpectedSHA256 parses KaranBanwasi.Patchwork.installer.yaml content and returns
@@ -731,6 +705,10 @@ func newSelfUpdateCmd() *cobra.Command {
 		Long:    `Check GitHub Releases for a newer version of Patchwork and update the executable in-place.`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.offline {
+				return errors.New("self-update requires network access and cannot run in --offline mode")
+			}
+
 			exePath, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("failed to determine current executable path: %w", err)
@@ -740,9 +718,10 @@ func newSelfUpdateCmd() *cobra.Command {
 				return fmt.Errorf("failed to resolve executable symlink: %w", err)
 			}
 
+			client := httputil.NewClient(httputil.WithTimeout(metadataTimeout))
 			return performSelfUpdate(
 				cmd.Context(),
-				http.DefaultClient,
+				client,
 				defaultGitHubAPI,
 				version,
 				runtime.GOOS,
@@ -757,6 +736,7 @@ func newSelfUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Force self-update even if installed via Winget or Scoop")
 	cmd.Flags().BoolVar(&opts.skipAttestation, "skip-attestation", false, "Skip build provenance attestation verification")
 	cmd.Flags().BoolVar(&opts.requireAttestation, "require-attestation", false, "Require build provenance attestation even in offline/custom environments")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access")
 
 	return cmd
 }

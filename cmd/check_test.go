@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,5 +169,53 @@ func TestCheckCmd_DefaultTimeoutIsZero(t *testing.T) {
 	}
 	if f.DefValue != "0s" && f.DefValue != "0" {
 		t.Errorf("expected default timeout to be 0s, got: %s", f.DefValue)
+	}
+}
+
+func TestCheckCmd_OfflineFlag(t *testing.T) {
+	cmd := newCheckCmd()
+	f := cmd.Flags().Lookup("offline")
+	if f == nil {
+		t.Fatalf("expected --offline flag to exist")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("expected default offline to be false, got: %s", f.DefValue)
+	}
+}
+
+func TestCheckCmd_JsonSchemaVersion(t *testing.T) {
+	mockMgr := &mockCheckManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "test.pkg", Name: "TestPkg", Version: "1.0.0", AvailableVersion: "2.0.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	cmd := newCheckCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"check", "--json"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected check --json to succeed, got: %v", err)
+	}
+
+	var parsed struct {
+		SchemaVersion string `json:"schema_version"`
+		Count         int    `json:"count"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("failed to decode json output: %v (output: %s)", err, stdout.String())
+	}
+
+	if parsed.SchemaVersion != "1.0.0" {
+		t.Errorf("expected schema_version '1.0.0', got %q", parsed.SchemaVersion)
+	}
+	if parsed.Count != 1 {
+		t.Errorf("expected count 1, got %d", parsed.Count)
 	}
 }

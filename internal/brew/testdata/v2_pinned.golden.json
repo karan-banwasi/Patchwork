@@ -1,0 +1,10 @@
+[
+  {
+    "name": "active-pkg",
+    "id": "active-pkg",
+    "version": "1.0.0",
+    "available_version": "2.0.0",
+    "source": "homebrew",
+    "manager": "brew"
+  }
+]

@@ -3,115 +3,171 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"text/template"
 
-	"github.com/AlecAivazis/survey/v2"
-	"github.com/AlecAivazis/survey/v2/core"
+	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 )
 
-func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
-	initSurveyTemplates()
-	tmpl, err := template.New("prompt").Funcs(core.TemplateFuncsWithColor).Parse(survey.MultiSelectQuestionTemplate)
+func TestUpgradeCmd_InteractiveWithMockSelector(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			{Id: "pkg.two", Name: "PkgTwo", Version: "2.0", AvailableVersion: "3.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Select only the second package (index 1: pkg.two)
+	mockSel := &MockMultiSelector{SelectedIndices: []int{1}}
+	SetDefaultSelectorForTest(mockSel)
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--no-refresh"})
+
+	err := cmd.Execute()
 	if err != nil {
-		t.Fatalf("failed to parse template: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	opts := []string{
-		"Outlook for Windows   Microsoft.Outlook   1.2026.811.200   1.2026.812.100   winget",
-		"Git                   Git.Git             2.55.0.2         2.55.0.3         winget",
+	if len(mockMgr.upgradedIDs) != 1 || mockMgr.upgradedIDs[0] != "pkg.two" {
+		t.Errorf("expected only pkg.two upgraded, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_InteractiveCanceled(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	mockSel := &MockMultiSelector{Err: ErrSelectionCanceled}
+	SetDefaultSelectorForTest(mockSel)
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error on canceled selection, got nil")
+	}
+	exitCode := exitcodes.Determine(context.Background(), err)
+	if exitCode != exitcodes.ExitCanceled {
+		t.Errorf("expected exit code %d (ExitCanceled), got: %d", exitcodes.ExitCanceled, exitCode)
+	}
+	if !strings.Contains(stdout.String(), "Selection canceled.") {
+		t.Errorf("expected cancellation message, got: %s", stdout.String())
+	}
+	if len(mockMgr.upgradedIDs) != 0 {
+		t.Errorf("expected no packages upgraded, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_JsonRequiresAllOrArgs(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "mockpm"}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error when --json used without --all or args, got nil")
+	}
+	if !strings.Contains(err.Error(), "--json requires either --all or explicit package IDs") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestUpgradeCmd_JsonDryRun(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--json", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 0 selected
-	var buf0 strings.Builder
-	err = tmpl.Execute(&buf0, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{},
-		Answer:      "",
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 0 selected: %v", err)
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON output (%v):\n%s", err, stdout.String())
 	}
-	if strings.Contains(buf0.String(), "Outlook") {
-		t.Errorf("unexpected output for 0 selections: %s", buf0.String())
+	if summary.SchemaVersion != "1.0.0" {
+		t.Errorf("expected schema_version 1.0.0, got %q", summary.SchemaVersion)
+	}
+	if !summary.DryRun {
+		t.Errorf("expected dry_run to be true in JSON output")
+	}
+	if len(summary.Results) != 1 || summary.Results[0].Package.ID != "pkg.one" {
+		t.Errorf("unexpected results in JSON: %+v", summary.Results)
+	}
+}
+
+func TestUpgradeCmd_JsonExecution(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--json", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 1 selected
-	var buf1 strings.Builder
-	err = tmpl.Execute(&buf1, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{0: true},
-		Answer:      opts[0],
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 1 selected: %v", err)
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON output (%v):\n%s", err, stdout.String())
 	}
-	if !strings.Contains(buf1.String(), "\n  ") || !strings.Contains(buf1.String(), opts[0]) {
-		t.Errorf("expected package on new line with indent, got: %s", buf1.String())
+	if summary.SchemaVersion != "1.0.0" {
+		t.Errorf("expected schema_version 1.0.0, got %q", summary.SchemaVersion)
 	}
-
-	// 2 selected
-	var buf2 strings.Builder
-	err = tmpl.Execute(&buf2, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{0: true, 1: true},
-		Answer:      strings.Join(opts, ", "),
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 2 selected: %v", err)
+	if summary.DryRun {
+		t.Errorf("expected dry_run to be false in execution JSON output")
 	}
-	lines := strings.Split(buf2.String(), "\n")
-	var packageLines []string
-	for _, l := range lines {
-		if strings.Contains(l, "winget") {
-			packageLines = append(packageLines, l)
-		}
+	if summary.Total != 1 || summary.Succeeded != 1 {
+		t.Errorf("unexpected summary counts: total=%d, succeeded=%d", summary.Total, summary.Succeeded)
 	}
-	if len(packageLines) != 2 {
-		t.Errorf("expected 2 package lines, got %d. Output:\n%s", len(packageLines), buf2.String())
-	}
-
-	// ShowAnswer = false (Interactive options list)
-	var bufInteractive strings.Builder
-	pageEntries := []core.OptionAnswer{
-		{Index: 0, Value: opts[0]},
-		{Index: 1, Value: opts[1]},
-	}
-	err = tmpl.Execute(&bufInteractive, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		PageEntries: pageEntries,
-		Checked:     map[int]bool{0: true},
-		ShowAnswer:  false,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render interactive prompt: %v", err)
-	}
-	t.Logf("Interactive output:\n%s", bufInteractive.String())
-
-	// Test core.RunTemplate
-	res, _, err := core.RunTemplate(survey.MultiSelectQuestionTemplate, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		PageEntries: pageEntries,
-		Checked:     map[int]bool{0: true},
-		ShowAnswer:  true,
-		Answer:      opts[0],
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("core.RunTemplate failed: %v", err)
-	}
-	t.Logf("core.RunTemplate output: %s", res)
 }
 
 func TestUpgradeCmd_MutuallyExclusiveAllAndArg(t *testing.T) {

@@ -1,0 +1,14 @@
+{
+  "typescript": {
+    "current": "5.4.2",
+    "wanted": "5.5.4",
+    "latest": "5.5.4",
+    "dependent": "global"
+  },
+  "@angular/cli": {
+    "current": "17.0.0",
+    "wanted": "17.3.0",
+    "latest": "18.1.0",
+    "dependent": "global"
+  }
+}

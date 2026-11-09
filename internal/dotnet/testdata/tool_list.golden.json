@@ -1,0 +1,18 @@
+[
+  {
+    "name": "dotnet-ef",
+    "id": "dotnet-ef",
+    "version": "8.0.4",
+    "available_version": "",
+    "source": "dotnet",
+    "manager": "dotnet"
+  },
+  {
+    "name": "csharpier",
+    "id": "csharpier",
+    "version": "0.28.2",
+    "available_version": "",
+    "source": "dotnet",
+    "manager": "dotnet"
+  }
+]

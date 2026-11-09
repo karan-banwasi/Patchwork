@@ -1,0 +1,18 @@
+[
+  {
+    "name": "EpsonNet Print",
+    "id": "EPSON.EpsonNetPrint",
+    "version": "3.2.1.0",
+    "available_version": "3.3.1",
+    "source": "winget",
+    "manager": "winget"
+  },
+  {
+    "name": "Gemini",
+    "id": "Google.GeminiDesktop",
+    "version": "1.17.0",
+    "available_version": "1.18.0",
+    "source": "winget",
+    "manager": "winget"
+  }
+]

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
 // BrewManager implements the pm.Manager interface for Homebrew formulas and casks.
@@ -256,7 +257,7 @@ func parseBrewOutdatedJSON(output string) ([]pm.PackageUpdate, error) {
 			curVer = f.InstalledVersions[len(f.InstalledVersions)-1]
 		}
 		availVer := f.CurrentVersion
-		if curVer != "" && availVer != "" && curVer != availVer {
+		if curVer != "" && availVer != "" && version.IsUpgrade("brew", curVer, availVer) {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             f.Name,
 				Id:               f.Name,
@@ -285,7 +286,7 @@ func parseBrewOutdatedJSON(output string) ([]pm.PackageUpdate, error) {
 			curVer = c.InstalledVersions[len(c.InstalledVersions)-1]
 		}
 		availVer := c.CurrentVersion
-		if curVer != "" && availVer != "" && curVer != availVer {
+		if curVer != "" && availVer != "" && version.IsUpgrade("brew", curVer, availVer) {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             displayName,
 				Id:               id,

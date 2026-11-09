@@ -1,0 +1,7 @@
+ruff v0.6.1
+- ruff.exe
+httpie v3.2.2
+- http.exe
+- https.exe
+black v24.4.2
+- black.exe
