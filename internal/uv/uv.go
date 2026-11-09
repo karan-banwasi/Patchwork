@@ -132,32 +132,33 @@ type pypiResponse struct {
 	} `json:"info"`
 }
 
-func fetchPyPILatestVersion(ctx context.Context, client *http.Client, pkgName string) string {
+func fetchPyPILatestVersion(ctx context.Context, client *http.Client, pkgName string) (string, error) {
 	url := fmt.Sprintf("https://pypi.org/pypi/%s/json", pkgName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	req.Header.Set("User-Agent", "Patchwork-CLI")
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var data pypiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return ""
+		return "", fmt.Errorf("invalid response: %w", err)
 	}
-	return strings.TrimSpace(data.Info.Version)
+	return strings.TrimSpace(data.Info.Version), nil
 }
 
-func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+// GetAvailableUpdatesWithWarnings queries PyPI and collects partial failure warnings.
+func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := uvPath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	runner := u.runner
@@ -165,22 +166,27 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 		runner = pm.ExecRunner{}
 	}
 
-	var stdout bytes.Buffer
-	if err := runner.Run(ctx, exe, []string{"tool", "list"}, nil, &stdout, io.Discard); err != nil {
-		return []pm.PackageUpdate{}, nil
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"tool", "list"}, nil, &stdout, &stderr); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return nil, nil, fmt.Errorf("failed to list uv tools: %w: %s", err, errMsg)
+		}
+		return nil, nil, fmt.Errorf("failed to list uv tools: %w", err)
 	}
 
 	tools := parseUvToolList(stdout.String())
 	if len(tools) == 0 {
-		return []pm.PackageUpdate{}, nil
+		return []pm.PackageUpdate{}, nil, nil
 	}
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	var (
-		updates []pm.PackageUpdate
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, 6)
+		updates    []pm.PackageUpdate
+		lookupErrs []error
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, 6)
 	)
 
 	for _, tool := range tools {
@@ -190,7 +196,13 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			latest := fetchPyPILatestVersion(ctx, client, t.Id)
+			latest, err := fetchPyPILatestVersion(ctx, client, t.Id)
+			if err != nil {
+				mu.Lock()
+				lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", t.Id, err))
+				mu.Unlock()
+				return
+			}
 			if latest != "" && latest != t.Version {
 				t.AvailableVersion = latest
 				mu.Lock()
@@ -204,7 +216,21 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 	sort.Slice(updates, func(i, j int) bool {
 		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
-	return updates, nil
+
+	if len(lookupErrs) > 0 {
+		if len(lookupErrs) == len(tools) {
+			return nil, nil, fmt.Errorf("failed to check any uv tools (0 of %d checked): %v", len(tools), lookupErrs[0])
+		}
+		warning := fmt.Errorf("[%s] %d of %d tools could not be checked; network error: %v", u.Name(), len(lookupErrs), len(tools), lookupErrs[0])
+		return updates, []error{warning}, nil
+	}
+
+	return updates, nil, nil
+}
+
+func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	updates, _, err := u.GetAvailableUpdatesWithWarnings(ctx)
+	return updates, err
 }
 
 func (u *UvManager) UpgradePackage(ctx context.Context, id string) error {

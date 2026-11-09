@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,25 +26,22 @@ func TestCheckCmd_UnknownManager(t *testing.T) {
 }
 
 func TestCheckCmd_ValidManagerAliases(t *testing.T) {
-	// Test Windows manager aliases
-	winReg := getDefaultRegistryForOS("windows")
-	for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust", "psresource", "powershell", "psresourceget"} {
-		mgr, exists := winReg.GetManager(name)
-		if !exists {
-			t.Errorf("expected windows manager %q to be recognized", name)
-		}
-		if mgr == nil {
-			t.Errorf("expected non-nil manager for %q", name)
-		}
-	}
-
-	// Test Darwin and Linux manager aliases (including brew)
-	for _, osName := range []string{"darwin", "linux"} {
-		unixReg := getDefaultRegistryForOS(osName)
-		for _, name := range []string{"brew", "BREW", "homebrew", "Homebrew", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust"} {
-			mgr, exists := unixReg.GetManager(name)
+	currentReg := getDefaultRegistry()
+	if runtime.GOOS == "windows" {
+		for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust", "psresource", "powershell", "psresourceget"} {
+			mgr, exists := currentReg.GetManager(name)
 			if !exists {
-				t.Errorf("expected %s manager %q to be recognized", osName, name)
+				t.Errorf("expected windows manager %q to be recognized", name)
+			}
+			if mgr == nil {
+				t.Errorf("expected non-nil manager for %q", name)
+			}
+		}
+	} else {
+		for _, name := range []string{"brew", "BREW", "homebrew", "Homebrew", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust"} {
+			mgr, exists := currentReg.GetManager(name)
+			if !exists {
+				t.Errorf("expected unix manager %q to be recognized", name)
 			}
 			if mgr == nil {
 				t.Errorf("expected non-nil manager for %q", name)
@@ -49,8 +49,6 @@ func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 		}
 	}
 
-	// Test current host OS registry
-	currentReg := getDefaultRegistry()
 	for _, name := range currentReg.ManagerNames() {
 		mgr, exists := currentReg.GetManager(name)
 		if !exists || mgr == nil {
@@ -106,5 +104,69 @@ func TestCheckCmd_CorruptConfigFailsClosed(t *testing.T) {
 	errInclude := cmdInclude.Execute()
 	if errInclude != nil {
 		t.Errorf("expected --include-pinned to bypass config load error, got: %v", errInclude)
+	}
+}
+
+type mockWarningManager struct {
+	mockCheckManager
+	refreshErr error
+	warnings   []error
+}
+
+func (m *mockWarningManager) Refresh(ctx context.Context) error {
+	return m.refreshErr
+}
+
+func (m *mockWarningManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
+	return m.updates, m.warnings, nil
+}
+
+func TestCheckCmd_SurfacesWarningsToStderr(t *testing.T) {
+	mockMgr := &mockWarningManager{
+		mockCheckManager: mockCheckManager{
+			name: "mockpm",
+			updates: []pm.PackageUpdate{
+				{Id: "test.pkg", Name: "TestPkg", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			},
+		},
+		refreshErr: fmt.Errorf("network connection refused"),
+		warnings:   []error{fmt.Errorf("partial registry failure for 1 package")},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"check"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected check to succeed despite warnings, got: %v", err)
+	}
+
+	errOutput := stderr.String()
+	if !strings.Contains(errOutput, "Warning: [mockpm] refresh failed: network connection refused") {
+		t.Errorf("expected refresh warning in stderr, got: %s", errOutput)
+	}
+	if !strings.Contains(errOutput, "Warning: partial registry failure for 1 package") {
+		t.Errorf("expected partial fetch warning in stderr, got: %s", errOutput)
+	}
+
+	stdOutput := stdout.String()
+	if !strings.Contains(stdOutput, "test.pkg") {
+		t.Errorf("expected updates table in stdout, got: %s", stdOutput)
+	}
+}
+
+func TestCheckCmd_DefaultTimeoutIsZero(t *testing.T) {
+	cmd := newCheckCmd()
+	f := cmd.Flags().Lookup("timeout")
+	if f == nil {
+		t.Fatalf("expected --timeout flag to exist")
+	}
+	if f.DefValue != "0s" && f.DefValue != "0" {
+		t.Errorf("expected default timeout to be 0s, got: %s", f.DefValue)
 	}
 }

@@ -63,6 +63,11 @@ func (w *WingetManager) ValidateID(id string) error {
 	return pm.ValidateWingetID(id)
 }
 
+// ConfigureOptions applies runtime upgrade options.
+func (w *WingetManager) ConfigureOptions(opts pm.UpgradeOptions) {
+	w.AcceptAgreements = opts.AcceptAgreements
+}
+
 // ShouldDefer reports whether upgrading id may close or restart the host shell or terminal.
 func (w *WingetManager) ShouldDefer(id string) bool {
 	return shouldOmitSilent(id)

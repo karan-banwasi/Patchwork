@@ -123,35 +123,36 @@ type cratesIOResponse struct {
 	} `json:"crate"`
 }
 
-func fetchCratesIOLatestVersion(ctx context.Context, client *http.Client, crateName string) string {
+func fetchCratesIOLatestVersion(ctx context.Context, client *http.Client, crateName string) (string, error) {
 	url := fmt.Sprintf("https://crates.io/api/v1/crates/%s", crateName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	req.Header.Set("User-Agent", "Patchwork-CLI (https://github.com/karan-banwasi/Patchwork)")
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var data cratesIOResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return ""
+		return "", fmt.Errorf("invalid response: %w", err)
 	}
 	if data.Crate.MaxStableVersion != "" {
-		return strings.TrimSpace(data.Crate.MaxStableVersion)
+		return strings.TrimSpace(data.Crate.MaxStableVersion), nil
 	}
-	return strings.TrimSpace(data.Crate.NewestVersion)
+	return strings.TrimSpace(data.Crate.NewestVersion), nil
 }
 
-func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+// GetAvailableUpdatesWithWarnings queries crates.io and collects partial failure warnings.
+func (c *CargoManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := cargoPath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	runner := c.runner
@@ -159,22 +160,27 @@ func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 		runner = pm.ExecRunner{}
 	}
 
-	var stdout bytes.Buffer
-	if err := runner.Run(ctx, exe, []string{"install", "--list"}, nil, &stdout, io.Discard); err != nil {
-		return []pm.PackageUpdate{}, nil
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"install", "--list"}, nil, &stdout, &stderr); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return nil, nil, fmt.Errorf("failed to list installed cargo packages: %w: %s", err, errMsg)
+		}
+		return nil, nil, fmt.Errorf("failed to list installed cargo packages: %w", err)
 	}
 
 	crates := parseCargoInstallList(stdout.String())
 	if len(crates) == 0 {
-		return []pm.PackageUpdate{}, nil
+		return []pm.PackageUpdate{}, nil, nil
 	}
 
 	client := &http.Client{Timeout: 8 * time.Second}
 	var (
-		updates []pm.PackageUpdate
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, 4)
+		updates    []pm.PackageUpdate
+		lookupErrs []error
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, 4)
 	)
 
 	for _, crate := range crates {
@@ -184,7 +190,13 @@ func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			latest := fetchCratesIOLatestVersion(ctx, client, cr.Id)
+			latest, err := fetchCratesIOLatestVersion(ctx, client, cr.Id)
+			if err != nil {
+				mu.Lock()
+				lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", cr.Id, err))
+				mu.Unlock()
+				return
+			}
 			if latest != "" && latest != cr.Version {
 				cr.AvailableVersion = latest
 				mu.Lock()
@@ -198,7 +210,21 @@ func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 	sort.Slice(updates, func(i, j int) bool {
 		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
-	return updates, nil
+
+	if len(lookupErrs) > 0 {
+		if len(lookupErrs) == len(crates) {
+			return nil, nil, fmt.Errorf("failed to check any crates (0 of %d checked): %v", len(crates), lookupErrs[0])
+		}
+		warning := fmt.Errorf("[%s] %d of %d crates could not be checked; network error: %v", c.Name(), len(lookupErrs), len(crates), lookupErrs[0])
+		return updates, []error{warning}, nil
+	}
+
+	return updates, nil, nil
+}
+
+func (c *CargoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	updates, _, err := c.GetAvailableUpdatesWithWarnings(ctx)
+	return updates, err
 }
 
 func (c *CargoManager) UpgradePackage(ctx context.Context, id string) error {

@@ -56,6 +56,11 @@ func (p *PSResourceManager) ValidateID(id string) error {
 	return pm.ValidatePSResourceID(id)
 }
 
+// ConfigureOptions applies runtime upgrade options.
+func (p *PSResourceManager) ConfigureOptions(opts pm.UpgradeOptions) {
+	p.TrustRepository = opts.TrustRepository
+}
+
 func (p *PSResourceManager) Path() (string, error) {
 	return pwshPath()
 }

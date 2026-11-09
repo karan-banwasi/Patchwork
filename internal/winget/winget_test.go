@@ -266,14 +266,14 @@ func TestShouldOmitSilent(t *testing.T) {
 }
 
 func TestBuildUpgradeArgs(t *testing.T) {
-	psArgs := buildUpgradeArgs("Microsoft.PowerShell")
+	psArgs := buildUpgradeArgsWithOptions("Microsoft.PowerShell", true)
 	for _, arg := range psArgs {
 		if arg == "--silent" {
 			t.Errorf("expected --silent to be omitted for Microsoft.PowerShell, got args: %v", psArgs)
 		}
 	}
 
-	gitArgs := buildUpgradeArgs("Git.Git")
+	gitArgs := buildUpgradeArgsWithOptions("Git.Git", true)
 	hasSilent := false
 	for _, arg := range gitArgs {
 		if arg == "--silent" {
@@ -287,7 +287,7 @@ func TestBuildUpgradeArgs(t *testing.T) {
 }
 
 func TestBuildIsolatedUpgradeScript(t *testing.T) {
-	args := buildUpgradeArgs("Microsoft.PowerShell")
+	args := buildUpgradeArgsWithOptions("Microsoft.PowerShell", true)
 	script := buildIsolatedUpgradeScript(
 		`C:\Users\test\AppData\Local\Microsoft\WindowsApps\winget.exe`,
 		"Microsoft.PowerShell",

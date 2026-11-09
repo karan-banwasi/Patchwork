@@ -85,11 +85,11 @@ func dotnetPath() (string, error) {
 	return "", fmt.Errorf("dotnet executable not found")
 }
 
-// GetAvailableUpdates lists global .NET tools and checks NuGet for newer stable versions.
-func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+// GetAvailableUpdatesWithWarnings lists global .NET tools, searches NuGet, and collects warnings.
+func (d *DotnetManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := dotnetPath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	runner := d.runner
@@ -97,21 +97,26 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 		runner = pm.ExecRunner{}
 	}
 
-	var stdout bytes.Buffer
-	if err := runner.Run(ctx, exe, []string{"tool", "list", "-g"}, nil, &stdout, io.Discard); err != nil {
-		return []pm.PackageUpdate{}, nil
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"tool", "list", "-g"}, nil, &stdout, &stderr); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return nil, nil, fmt.Errorf("failed to list global dotnet tools: %w: %s", err, errMsg)
+		}
+		return nil, nil, fmt.Errorf("failed to list global dotnet tools: %w", err)
 	}
 
 	tools := parseDotnetToolList(stdout.String())
 	if len(tools) == 0 {
-		return []pm.PackageUpdate{}, nil
+		return []pm.PackageUpdate{}, nil, nil
 	}
 
 	var (
-		updates []pm.PackageUpdate
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, 4) // bound concurrent NuGet searches
+		updates    []pm.PackageUpdate
+		lookupErrs []error
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, 4)
 	)
 
 	for _, tool := range tools {
@@ -121,8 +126,16 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			var sOut bytes.Buffer
-			if err := runner.Run(ctx, exe, []string{"tool", "search", t.Id, "--take", "5"}, nil, &sOut, io.Discard); err != nil {
+			var sOut, sErr bytes.Buffer
+			if err := runner.Run(ctx, exe, []string{"tool", "search", t.Id, "--take", "5"}, nil, &sOut, &sErr); err != nil {
+				errMsg := strings.TrimSpace(sErr.String())
+				mu.Lock()
+				if errMsg != "" {
+					lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w: %s", t.Id, err, errMsg))
+				} else {
+					lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", t.Id, err))
+				}
+				mu.Unlock()
 				return
 			}
 			latest := parseDotnetToolSearchLatest(sOut.String(), t.Id)
@@ -139,7 +152,22 @@ func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 	sort.Slice(updates, func(i, j int) bool {
 		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
-	return updates, nil
+
+	if len(lookupErrs) > 0 {
+		if len(lookupErrs) == len(tools) {
+			return nil, nil, fmt.Errorf("failed to check any dotnet tools (0 of %d checked): %v", len(tools), lookupErrs[0])
+		}
+		warning := fmt.Errorf("[%s] %d of %d tools could not be checked; lookup error: %v", d.Name(), len(lookupErrs), len(tools), lookupErrs[0])
+		return updates, []error{warning}, nil
+	}
+
+	return updates, nil, nil
+}
+
+// GetAvailableUpdates lists global .NET tools and checks NuGet for newer stable versions.
+func (d *DotnetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	updates, _, err := d.GetAvailableUpdatesWithWarnings(ctx)
+	return updates, err
 }
 
 func parseDotnetToolList(output string) []pm.PackageUpdate {

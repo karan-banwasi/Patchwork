@@ -18,14 +18,12 @@ type Registry struct {
 	managers     []Manager
 	FetchTimeout time.Duration
 	SkipRefresh  bool
-	Warnings     []error
 }
 
 // NewRegistry creates a new Registry populated with the provided managers.
 func NewRegistry(managers ...Manager) *Registry {
 	return &Registry{
-		managers:     managers,
-		FetchTimeout: DefaultFetchTimeout,
+		managers: managers,
 	}
 }
 
@@ -39,6 +37,19 @@ func (r *Registry) All() []Manager {
 	out := make([]Manager, len(r.managers))
 	copy(out, r.managers)
 	return out
+}
+
+// ConfigureOptions applies runtime upgrade options to all registered managers
+// implementing OptionsConfigurable.
+func (r *Registry) ConfigureOptions(opts UpgradeOptions) {
+	if r == nil {
+		return
+	}
+	for _, m := range r.managers {
+		if oc, ok := m.(OptionsConfigurable); ok {
+			oc.ConfigureOptions(opts)
+		}
+	}
 }
 
 // GetManager returns a registered package manager by its canonical name or any of its aliases (case-insensitive).
@@ -69,21 +80,20 @@ func (r *Registry) ManagerNames() []string {
 	return names
 }
 
-// ShouldDefer reports whether upgrading pkg should be deferred to the end of an upgrade queue.
+// ShouldDefer reports whether upgrading pkg should be deferred to the end of an upgrade queue
+// by delegating to the package manager's Deferrer implementation if available.
 func (r *Registry) ShouldDefer(pkg PackageUpdate) bool {
-	if r != nil {
-		if mgr, ok := r.GetManager(pkg.ManagerName); ok {
-			if d, ok := mgr.(Deferrer); ok {
-				return d.ShouldDefer(pkg.Id)
-			}
-		}
+	if r == nil {
+		return false
 	}
-	lower := strings.ToLower(strings.TrimSpace(pkg.Id))
-	return strings.HasPrefix(lower, "microsoft.powershell") ||
-		strings.HasPrefix(lower, "microsoft.windowsterminal") ||
-		lower == "pwsh" ||
-		lower == "powershell" ||
-		lower == "windows-terminal"
+	mgr, ok := r.GetManager(pkg.ManagerName)
+	if !ok {
+		return false
+	}
+	if d, ok := mgr.(Deferrer); ok {
+		return d.ShouldDefer(pkg.Id)
+	}
+	return false
 }
 
 // ActiveManagers returns all registered package managers that are available on the system.
@@ -112,8 +122,12 @@ func (r *Registry) ActiveManagers(ctx context.Context) []Manager {
 	return active
 }
 
-func (r *Registry) managerTimeout(mgr Manager) time.Duration {
-	if r.FetchTimeout > 0 {
+// ManagerTimeout resolves the effective timeout for a manager:
+// 1. If r != nil and r.FetchTimeout > 0, returns r.FetchTimeout (explicit user/CLI override)
+// 2. If mgr implements TimeoutProvider and returns > 0, returns tp.FetchTimeout()
+// 3. Otherwise returns DefaultFetchTimeout (2m)
+func (r *Registry) ManagerTimeout(mgr Manager) time.Duration {
+	if r != nil && r.FetchTimeout > 0 {
 		return r.FetchTimeout
 	}
 	if tp, ok := mgr.(TimeoutProvider); ok {
@@ -124,66 +138,124 @@ func (r *Registry) managerTimeout(mgr Manager) time.Duration {
 	return DefaultFetchTimeout
 }
 
-// FetchAllUpdates queries all active package managers concurrently for available updates.
-// Partial-failure warnings are recorded in r.Warnings and can also be retrieved via FetchAllUpdatesWithWarnings.
-func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error) {
-	updates, warnings, err := r.FetchAllUpdatesWithWarnings(ctx)
-	r.Warnings = warnings
-	return updates, err
+func (r *Registry) managerTimeout(mgr Manager) time.Duration {
+	return r.ManagerTimeout(mgr)
 }
 
-// FetchAllUpdatesWithWarnings queries all active package managers concurrently and returns
-// collected updates, any per-manager partial failure warnings, and a fatal error if all active managers failed.
-func (r *Registry) FetchAllUpdatesWithWarnings(ctx context.Context) ([]PackageUpdate, []error, error) {
-	active := r.ActiveManagers(ctx)
-	if len(active) == 0 {
-		r.Warnings = nil
-		return nil, nil, nil
+// FetchUpdates queries package managers for available updates, optionally filtering by manager names.
+// If filter is empty, all active managers on the system are queried concurrently.
+// If filter is provided, only specified managers are queried; unknown or unavailable managers return an error.
+// Returns collected updates, all aggregated warnings (refresh failures, partial lookups, non-fatal manager errors),
+// and a fatal error only if all targeted managers fail.
+func (r *Registry) FetchUpdates(ctx context.Context, filter ...string) ([]PackageUpdate, []error, error) {
+	var targetManagers []Manager
+
+	var cleanFilter []string
+	for _, f := range filter {
+		trimmed := strings.TrimSpace(f)
+		if trimmed != "" {
+			cleanFilter = append(cleanFilter, trimmed)
+		}
+	}
+
+	if len(cleanFilter) == 0 {
+		targetManagers = r.ActiveManagers(ctx)
+		if len(targetManagers) == 0 {
+			return nil, nil, nil
+		}
+	} else {
+		seen := make(map[string]bool)
+		for _, name := range cleanFilter {
+			mgr, exists := r.GetManager(name)
+			if !exists {
+				return nil, nil, fmt.Errorf("unknown package manager %q (supported: %s)", name, strings.Join(r.ManagerNames(), ", "))
+			}
+			if !mgr.IsAvailable(ctx) {
+				return nil, nil, fmt.Errorf("package manager %q is not installed or available on this system", name)
+			}
+			if !seen[mgr.Name()] {
+				seen[mgr.Name()] = true
+				targetManagers = append(targetManagers, mgr)
+			}
+		}
 	}
 
 	type fetchResult struct {
-		updates []PackageUpdate
-		err     error
+		updates  []PackageUpdate
+		warnings []error
+		err      error
 	}
 
-	ch := make(chan fetchResult, len(active))
+	ch := make(chan fetchResult, len(targetManagers))
 
-	for _, m := range active {
+	for _, m := range targetManagers {
 		go func(mgr Manager) {
-			timeout := r.managerTimeout(mgr)
+			timeout := r.ManagerTimeout(mgr)
 			cctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
+			var refreshWarning error
 			if !r.SkipRefresh {
 				if refresher, ok := mgr.(Refresher); ok {
-					_ = refresher.Refresh(cctx)
+					if refErr := refresher.Refresh(cctx); refErr != nil {
+						if errors.Is(cctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+							refreshWarning = fmt.Errorf("[%s] refresh timed out after %s: %w", mgr.Name(), timeout, refErr)
+						} else {
+							refreshWarning = fmt.Errorf("[%s] refresh failed: %w", mgr.Name(), refErr)
+						}
+					}
 				}
 			}
 
-			updates, err := mgr.GetAvailableUpdates(cctx)
-			if err != nil {
+			var (
+				updates       []PackageUpdate
+				fetchWarnings []error
+				fetchErr      error
+			)
+
+			if wf, ok := mgr.(WarningFetcher); ok {
+				updates, fetchWarnings, fetchErr = wf.GetAvailableUpdatesWithWarnings(cctx)
+			} else {
+				updates, fetchErr = mgr.GetAvailableUpdates(cctx)
+			}
+
+			if fetchErr != nil {
 				if errors.Is(cctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-					err = fmt.Errorf("timed out after %s", timeout)
+					fetchErr = fmt.Errorf("timed out after %s", timeout)
 				}
-				ch <- fetchResult{err: fmt.Errorf("[%s] %w", mgr.Name(), err)}
-				return
+				fetchErr = fmt.Errorf("[%s] %w", mgr.Name(), fetchErr)
 			}
-			if errors.Is(cctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				ch <- fetchResult{err: fmt.Errorf("[%s] timed out after %s", mgr.Name(), timeout)}
-				return
+
+			var combinedWarnings []error
+			if refreshWarning != nil {
+				combinedWarnings = append(combinedWarnings, refreshWarning)
 			}
-			ch <- fetchResult{updates: updates}
+			if len(fetchWarnings) > 0 {
+				combinedWarnings = append(combinedWarnings, fetchWarnings...)
+			}
+
+			ch <- fetchResult{
+				updates:  updates,
+				warnings: combinedWarnings,
+				err:      fetchErr,
+			}
 		}(m)
 	}
 
-	var allUpdates []PackageUpdate
-	var errs []error
-	seen := make(map[string]bool)
+	var (
+		allUpdates  []PackageUpdate
+		allWarnings []error
+		managerErrs []error
+		seen        = make(map[string]bool)
+	)
 
-	for i := 0; i < len(active); i++ {
+	for i := 0; i < len(targetManagers); i++ {
 		res := <-ch
+		if len(res.warnings) > 0 {
+			allWarnings = append(allWarnings, res.warnings...)
+		}
 		if res.err != nil {
-			errs = append(errs, res.err)
+			managerErrs = append(managerErrs, res.err)
 		} else {
 			for _, u := range res.updates {
 				key := u.ManagerName + ":" + u.Id
@@ -203,10 +275,25 @@ func (r *Registry) FetchAllUpdatesWithWarnings(ctx context.Context) ([]PackageUp
 		return strings.ToLower(allUpdates[i].Name) < strings.ToLower(allUpdates[j].Name)
 	})
 
-	r.Warnings = errs
-	if len(errs) > 0 && len(errs) == len(active) {
-		return nil, errs, fmt.Errorf("failed to fetch updates: %w", errors.Join(errs...))
+	if len(managerErrs) > 0 && len(managerErrs) == len(targetManagers) {
+		return nil, allWarnings, fmt.Errorf("failed to fetch updates: %w", errors.Join(managerErrs...))
 	}
 
-	return allUpdates, errs, nil
+	if len(managerErrs) > 0 {
+		allWarnings = append(allWarnings, managerErrs...)
+	}
+
+	return allUpdates, allWarnings, nil
+}
+
+// FetchAllUpdatesWithWarnings queries all active package managers concurrently and returns
+// collected updates, any per-manager partial failure warnings, and a fatal error if all active managers failed.
+func (r *Registry) FetchAllUpdatesWithWarnings(ctx context.Context) ([]PackageUpdate, []error, error) {
+	return r.FetchUpdates(ctx)
+}
+
+// FetchAllUpdates queries all active package managers concurrently for available updates.
+func (r *Registry) FetchAllUpdates(ctx context.Context) ([]PackageUpdate, error) {
+	updates, _, err := r.FetchUpdates(ctx)
+	return updates, err
 }

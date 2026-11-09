@@ -70,6 +70,25 @@ type IOConfigurable interface {
 	SetIO(stdin io.Reader, stdout, stderr io.Writer)
 }
 
+// UpgradeOptions specifies runtime options for package managers during upgrade operations.
+type UpgradeOptions struct {
+	AcceptAgreements bool
+	TrustRepository  bool
+}
+
+// OptionsConfigurable is an optional interface implemented by package managers
+// that accept runtime upgrade configuration options.
+type OptionsConfigurable interface {
+	ConfigureOptions(opts UpgradeOptions)
+}
+
+// WarningFetcher is an optional interface implemented by package managers that can report
+// partial-failure warnings (such as unreachable upstream package registries) alongside
+// successfully fetched package updates.
+type WarningFetcher interface {
+	GetAvailableUpdatesWithWarnings(ctx context.Context) ([]PackageUpdate, []error, error)
+}
+
 // TimeoutProvider is an optional interface implemented by managers that customize their fetch timeout.
 type TimeoutProvider interface {
 	FetchTimeout() time.Duration

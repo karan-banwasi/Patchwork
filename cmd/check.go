@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -42,10 +41,7 @@ func newCheckCmd() *cobra.Command {
 
 			silentStatus := opts.json || opts.quiet
 
-			var updates []pm.PackageUpdate
-			var warnings []error
-			var err error
-
+			var filter []string
 			if opts.manager != "" {
 				mgr, exists := registry.GetManager(opts.manager)
 				if !exists {
@@ -54,28 +50,19 @@ func newCheckCmd() *cobra.Command {
 				if !mgr.IsAvailable(cmd.Context()) {
 					return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
 				}
+				filter = append(filter, opts.manager)
 				if !silentStatus {
 					fmt.Fprintf(out, "Checking for available updates using %s...\n", mgr.Name())
-				}
-				cctx, cancel := context.WithTimeout(cmd.Context(), registry.FetchTimeout)
-				defer cancel()
-				if !opts.noRefresh {
-					if refresher, ok := mgr.(pm.Refresher); ok {
-						_ = refresher.Refresh(cctx)
-					}
-				}
-				updates, err = mgr.GetAvailableUpdates(cctx)
-				if err != nil {
-					return err
 				}
 			} else {
 				if !silentStatus {
 					fmt.Fprintln(out, "Checking for available updates across all supported package managers...")
 				}
-				updates, warnings, err = registry.FetchAllUpdatesWithWarnings(cmd.Context())
-				if err != nil {
-					return err
-				}
+			}
+
+			updates, warnings, err := registry.FetchUpdates(cmd.Context(), filter...)
+			if err != nil {
+				return err
 			}
 
 			for _, w := range warnings {
@@ -192,7 +179,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.quiet, "quiet", "q", false, "Output only tab-separated package IDs and versions")
 	cmd.Flags().BoolVar(&opts.includePinned, "include-pinned", false, "Include pinned packages in the check output")
 	cmd.Flags().BoolVar(&opts.noRefresh, "no-refresh", false, "Skip bucket/repository refresh before checking updates")
-	cmd.Flags().DurationVar(&opts.timeout, "timeout", pm.DefaultFetchTimeout, "Per-manager timeout when querying updates")
+	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-manager timeout when querying updates (0 uses manager defaults)")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
 
 	return cmd

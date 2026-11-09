@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,5 +268,72 @@ func TestUpgradeCmd_AcceptAgreementsNotice(t *testing.T) {
 	maybePrintWingetAgreementsNotice(&buf, nonWinget, true)
 	if buf.Len() != 0 {
 		t.Errorf("expected no notice for non-winget packages, got: %s", buf.String())
+	}
+}
+
+func TestUpgradeCmd_DefaultTimeoutIsZero(t *testing.T) {
+	cmd := newUpgradeCmd()
+	f := cmd.Flags().Lookup("timeout")
+	if f == nil {
+		t.Fatalf("expected --timeout flag to exist")
+	}
+	if f.DefValue != "0s" && f.DefValue != "0" {
+		t.Errorf("expected default timeout to be 0s, got: %s", f.DefValue)
+	}
+}
+
+type mockUpgradeManager struct {
+	name        string
+	updates     []pm.PackageUpdate
+	upgradedIDs []string
+}
+
+func (m *mockUpgradeManager) Name() string                         { return m.name }
+func (m *mockUpgradeManager) Aliases() []string                    { return nil }
+func (m *mockUpgradeManager) IsAvailable(ctx context.Context) bool { return true }
+func (m *mockUpgradeManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	return m.updates, nil
+}
+func (m *mockUpgradeManager) UpgradePackage(ctx context.Context, id string) error {
+	m.upgradedIDs = append(m.upgradedIDs, id)
+	return nil
+}
+func (m *mockUpgradeManager) ValidateID(id string) error { return nil }
+
+func TestUpgradeCmd_DryRunAllPlan(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			{Id: "pkg.two", Name: "PkgTwo", Version: "2.0", AvailableVersion: "3.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected dry-run upgrade to succeed, got: %v", err)
+	}
+
+	outStr := stdout.String()
+	if !strings.Contains(outStr, "[Dry Run] Would upgrade 2 package(s):") {
+		t.Errorf("expected dry run header, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "=== Upgrade Summary ===") {
+		t.Errorf("expected upgrade summary table, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "Dry-Run") {
+		t.Errorf("expected Dry-Run status in summary table, got: %s", outStr)
+	}
+
+	if len(mockMgr.upgradedIDs) != 0 {
+		t.Errorf("expected 0 packages upgraded during dry-run, got: %v", mockMgr.upgradedIDs)
 	}
 }

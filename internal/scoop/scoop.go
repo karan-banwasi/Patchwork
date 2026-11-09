@@ -102,7 +102,15 @@ func (s *ScoopManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	return runner.Run(ctx, exe, []string{"update"}, nil, io.Discard, io.Discard)
+	var errBuf bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"update"}, nil, io.Discard, &errBuf); err != nil {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // scoopPath resolves the path to scoop CLI executable.

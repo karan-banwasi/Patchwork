@@ -21,11 +21,6 @@ func shouldOmitSilent(id string) bool {
 		lower == "windows-terminal"
 }
 
-// buildUpgradeArgs constructs the winget command-line arguments for upgrading a package (with agreement flags enabled).
-func buildUpgradeArgs(id string) []string {
-	return buildUpgradeArgsWithOptions(id, true)
-}
-
 // buildUpgradeArgsWithOptions constructs the winget command-line arguments for upgrading a package.
 func buildUpgradeArgsWithOptions(id string, acceptAgreements bool) []string {
 	args := []string{"upgrade", "--id", id, "--exact"}
@@ -149,9 +144,4 @@ func (w *WingetManager) UpgradePackage(ctx context.Context, id string) error {
 		return fmt.Errorf("winget upgrade failed: %w", err)
 	}
 	return nil
-}
-
-// UpgradePackage is a package-level helper for convenience.
-func UpgradePackage(ctx context.Context, id string) error {
-	return NewWingetManager().UpgradePackage(ctx, id)
 }

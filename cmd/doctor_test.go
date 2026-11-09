@@ -92,29 +92,31 @@ func TestDoctorCmd_WarnsOnDuplicatePWOnPath(t *testing.T) {
 	}
 }
 
-func TestGetDefaultRegistryForOS(t *testing.T) {
-	winReg := getDefaultRegistryForOS("windows")
-	winNames := winReg.ManagerNames()
-	for _, expected := range []string{"winget", "scoop", "choco", "psresource", "npm", "dotnet", "uv", "cargo"} {
-		if _, ok := winReg.GetManager(expected); !ok {
-			t.Errorf("expected windows registry to contain %s, got: %v", expected, winNames)
+func TestGetDefaultRegistry(t *testing.T) {
+	reg := getDefaultRegistry()
+	names := reg.ManagerNames()
+	for _, expected := range []string{"npm", "dotnet", "uv", "cargo"} {
+		if _, ok := reg.GetManager(expected); !ok {
+			t.Errorf("expected registry to contain %s, got: %v", expected, names)
 		}
-	}
-	if _, ok := winReg.GetManager("brew"); ok {
-		t.Errorf("expected windows registry NOT to contain brew")
 	}
 
-	for _, osName := range []string{"darwin", "linux"} {
-		unixReg := getDefaultRegistryForOS(osName)
-		unixNames := unixReg.ManagerNames()
-		for _, expected := range []string{"brew", "npm", "dotnet", "uv", "cargo"} {
-			if _, ok := unixReg.GetManager(expected); !ok {
-				t.Errorf("expected %s registry to contain %s, got: %v", osName, expected, unixNames)
+	if runtime.GOOS == "windows" {
+		for _, expected := range []string{"winget", "scoop", "choco", "psresource"} {
+			if _, ok := reg.GetManager(expected); !ok {
+				t.Errorf("expected windows registry to contain %s, got: %v", expected, names)
 			}
 		}
+		if _, ok := reg.GetManager("brew"); ok {
+			t.Errorf("expected windows registry NOT to contain brew")
+		}
+	} else {
+		if _, ok := reg.GetManager("brew"); !ok {
+			t.Errorf("expected unix registry to contain brew, got: %v", names)
+		}
 		for _, excluded := range []string{"winget", "scoop", "choco", "psresource"} {
-			if _, ok := unixReg.GetManager(excluded); ok {
-				t.Errorf("expected %s registry NOT to contain %s", osName, excluded)
+			if _, ok := reg.GetManager(excluded); ok {
+				t.Errorf("expected unix registry NOT to contain %s", excluded)
 			}
 		}
 	}

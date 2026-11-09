@@ -48,7 +48,7 @@
 |---|------|-------|-------------|--------|
 | M1 | P0 Critical: Cross-Platform Self-Update & SHA256SUMS | Issue #23: Cross-platform asset mapping for `(GOOS, GOARCH)`, universal `SHA256SUMS` generation in release workflow and consumption in `selfupdate.go` and `install.ps1`, update file cleanup, test matrix | none | DONE (resolved in cmd/selfupdate.go, release.yml, install.ps1; 100% test pass) |
 | M2 | Security & Release Pipeline Hardening | Issues #24, #25, #26, #28, #29, #30: Attestation verification, workflow secrets scoping, atomic config saves, install.ps1 error handling, CI hygiene | M1 | DONE |
-| M3 | Core Architecture & Engine Refactoring | Issues #27, #31, #32, #33, #34, #35, #36, #37, #38, #39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured error reporting, survey migration, exit codes | M1 | PLANNED |
+| M3 | Core Architecture & Engine Refactoring | Issues #27, #31, #32, #33, #34, #35, #36, #37, #38, #39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured error reporting, survey migration, exit codes | M1 | M3A (Issues #31, #32, #33, #34) DONE; M3B PLANNED |
 | M4 | Governance & Documentation Alignment | Issues #40, #41, #42, #43, #44: Cross-platform README, SECURITY.md, CONTRIBUTING.md, templates, ARCHITECTURE.md, purge stale manifests | none | PLANNED |
 | M5 | Distribution & Extended Features | Issues #45, #46, #47, #48, #49, #50, #51, #52: Rich config, advanced upgrade policies, notifications, history, additional managers | M2, M3 | PLANNED |
 | M6 | Final Verification, CI Validation & Release Prep | Verification across all platforms, remote GitHub Actions CI green, clean working tree, ready for release | M1-M5 | PLANNED |
