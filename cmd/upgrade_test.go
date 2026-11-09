@@ -207,6 +207,10 @@ func TestUpgradeCmd_MutuallyExclusiveByManagerAndArg(t *testing.T) {
 }
 
 func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "winget"}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
 	input := []pm.PackageUpdate{
 		{Id: "Microsoft.PowerShell", Name: "PowerShell", ManagerName: "winget"},
 		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
@@ -355,6 +359,10 @@ func (m *mockUpgradeManager) UpgradePackage(ctx context.Context, id string) erro
 	return nil
 }
 func (m *mockUpgradeManager) ValidateID(id string) error { return nil }
+func (m *mockUpgradeManager) ShouldDefer(id string) bool {
+	lower := strings.ToLower(id)
+	return strings.Contains(lower, "powershell") || strings.Contains(lower, "terminal")
+}
 
 func TestUpgradeCmd_DryRunAllPlan(t *testing.T) {
 	mockMgr := &mockUpgradeManager{

@@ -177,7 +177,10 @@ func TestCLIDocumentationUpToDate(t *testing.T) {
 			t.Fatalf("missing CLI doc file %s. Run 'go test ./cmd -update' to generate.", committedFile)
 		}
 
-		if string(genContent) != string(committedContent) {
+		normGen := strings.ReplaceAll(string(genContent), "\r\n", "\n")
+		normCommitted := strings.ReplaceAll(string(committedContent), "\r\n", "\n")
+
+		if normGen != normCommitted {
 			t.Errorf("CLI doc %s is out of date. Run 'go test ./cmd -update' to regenerate.", baseName)
 		}
 	}
