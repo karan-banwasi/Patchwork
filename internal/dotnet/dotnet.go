@@ -81,16 +81,42 @@ func (d *DotnetManager) Version(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, exe, "--version").Output()
-	if err != nil {
+	runner := d.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"--version"}, nil, &stdout, &stderr); err != nil {
 		return "unknown", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 func (d *DotnetManager) IsAvailable(ctx context.Context) bool {
-	_, err := dotnetPath()
-	return err == nil
+	exe, err := dotnetPath()
+	if err != nil {
+		return false
+	}
+	return d.hasSDK(ctx, exe)
+}
+
+func (d *DotnetManager) hasSDK(ctx context.Context, exe string) bool {
+	runner := d.runner
+	if runner == nil {
+		runner = pm.ExecRunner{}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"--list-sdks"}, nil, &stdout, &stderr); err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(stdout.String())) > 0
+}
+
+func isNoSDKError(msg string) bool {
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "no .net sdks were found") ||
+		strings.Contains(lower, "no .net sdk was found") ||
+		strings.Contains(lower, "sdk-not-found")
 }
 
 func dotnetPath() (string, error) {
@@ -117,6 +143,9 @@ func (d *DotnetManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]
 	var stdout, stderr bytes.Buffer
 	if err := runner.Run(ctx, exe, []string{"tool", "list", "-g"}, nil, &stdout, &stderr); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
+		if isNoSDKError(errMsg) || isNoSDKError(stdout.String()) {
+			return []pm.PackageUpdate{}, nil, nil
+		}
 		if errMsg != "" {
 			return nil, nil, fmt.Errorf("failed to list global dotnet tools: %w: %s", err, errMsg)
 		}

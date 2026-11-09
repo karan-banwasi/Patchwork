@@ -103,3 +103,104 @@ tool-ok         2.0.0
 		t.Errorf("expected 1 warning about partial failure, got: %v", warnings)
 	}
 }
+
+func TestDotnet_IsAvailable(t *testing.T) {
+	mgr := NewDotnetManager()
+
+	// When dotnet executable path is available:
+	if _, err := dotnetPath(); err != nil {
+		t.Skip("dotnet executable not found on host, skipping IsAvailable host test")
+	}
+
+	// Case 1: SDKs present
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) == 1 && args[0] == "--list-sdks" {
+				stdout.Write([]byte("8.0.404 [C:\\Program Files\\dotnet\\sdk]\n"))
+				return nil
+			}
+			return nil
+		},
+	}
+	if !mgr.IsAvailable(context.Background()) {
+		t.Errorf("expected IsAvailable to return true when SDK is present")
+	}
+
+	// Case 2: No SDKs present (empty output)
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) == 1 && args[0] == "--list-sdks" {
+				return nil
+			}
+			return nil
+		},
+	}
+	if mgr.IsAvailable(context.Background()) {
+		t.Errorf("expected IsAvailable to return false when no SDKs are installed")
+	}
+
+	// Case 3: Error running --list-sdks
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			return errors.New("command failed")
+		},
+	}
+	if mgr.IsAvailable(context.Background()) {
+		t.Errorf("expected IsAvailable to return false on execution error")
+	}
+}
+
+func TestDotnet_NoSDKError_ToleratedInUpdateCheck(t *testing.T) {
+	mgr := NewDotnetManager()
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) > 1 && args[0] == "tool" && args[1] == "list" {
+				stderr.Write([]byte(`The command could not be loaded, possibly because:
+  * You intended to execute a .NET application:
+      The application 'tool' does not exist or is not a managed .dll or .exe.
+  * You intended to execute a .NET SDK command:
+      No .NET SDKs were found.
+
+Download a .NET SDK:
+https://aka.ms/dotnet/download`))
+				return errors.New("exit status 0x8000809b")
+			}
+			return nil
+		},
+	}
+
+	updates, warnings, err := mgr.GetAvailableUpdatesWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("expected no error when no SDK is found, got: %v", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("expected 0 updates, got %d", len(updates))
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings, got %d", len(warnings))
+	}
+}
+
+func TestDotnet_Version(t *testing.T) {
+	mgr := NewDotnetManager()
+	if _, err := dotnetPath(); err != nil {
+		t.Skip("dotnet executable not found on host, skipping Version host test")
+	}
+
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) == 1 && args[0] == "--version" {
+				stdout.Write([]byte("8.0.404\n"))
+				return nil
+			}
+			return nil
+		},
+	}
+	ver, err := mgr.Version(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error getting version: %v", err)
+	}
+	if ver != "8.0.404" {
+		t.Errorf("expected version 8.0.404, got %q", ver)
+	}
+}
