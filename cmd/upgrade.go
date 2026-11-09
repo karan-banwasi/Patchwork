@@ -92,13 +92,29 @@ func configureManagerOptions(reg *pm.Registry, opts upgradeOptions) {
 	}
 }
 
-func splitPinnedTargets(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageUpdate, skippedResults []upgradeResult) {
+func maybePrintWingetAgreementsNotice(out io.Writer, pkgs []pm.PackageUpdate, acceptAgreements bool) {
+	if !acceptAgreements {
+		return
+	}
+	for _, p := range pkgs {
+		if strings.EqualFold(p.ManagerName, "winget") {
+			fmt.Fprintln(out, "Notice: Automatically accepting Winget package and source agreements (--accept-agreements=true).")
+			fmt.Fprintln(out, "        Pass --accept-agreements=false to review agreements manually.")
+			return
+		}
+	}
+}
+
+func splitPinnedTargets(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageUpdate, skippedResults []upgradeResult, err error) {
 	if ignorePins {
-		return pkgs, nil
+		return pkgs, nil, nil
 	}
 	cfg, err := config.Load()
-	if err != nil || len(cfg.PinnedPackages) == 0 {
-		return pkgs, nil
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
+	}
+	if len(cfg.PinnedPackages) == 0 {
+		return pkgs, nil, nil
 	}
 	for _, pkg := range pkgs {
 		if cfg.IsPinnedForManager(pkg.ManagerName, pkg.Id, pkg.Name) {
@@ -110,7 +126,7 @@ func splitPinnedTargets(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.
 		}
 		allowed = append(allowed, pkg)
 	}
-	return allowed, skippedResults
+	return allowed, skippedResults, nil
 }
 
 func newUpgradeCmd() *cobra.Command {
@@ -135,6 +151,11 @@ func newUpgradeCmd() *cobra.Command {
 			errOut := cmd.ErrOrStderr()
 			registry := getDefaultRegistry()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
+			if !cmd.Flags().Changed("accept-agreements") {
+				if cfg, err := config.Load(); err == nil && cfg != nil && cfg.AcceptAgreements != nil {
+					opts.acceptAgreements = *cfg.AcceptAgreements
+				}
+			}
 			configureManagerOptions(registry, opts)
 			if opts.timeout > 0 {
 				registry.FetchTimeout = opts.timeout
@@ -182,7 +203,11 @@ func newUpgradeCmd() *cobra.Command {
 
 				var pinnedCount int
 				if !ignorePins {
-					updates, pinnedCount = filterOutPinned(updates)
+					var err error
+					updates, pinnedCount, err = filterOutPinned(updates)
+					if err != nil {
+						return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
+					}
 				}
 				if len(updates) == 0 {
 					if pinnedCount > 0 {
@@ -194,6 +219,7 @@ func newUpgradeCmd() *cobra.Command {
 				}
 
 				ordered := orderSelectedPackagesWithRegistry(registry, updates)
+				maybePrintWingetAgreementsNotice(out, ordered, opts.acceptAgreements)
 				if opts.dryRun {
 					fmt.Fprintf(out, "[Dry Run] Would upgrade %d package(s):\n", len(ordered))
 					var results []upgradeResult
@@ -219,7 +245,10 @@ func newUpgradeCmd() *cobra.Command {
 					for _, packageId := range args {
 						pkgs = append(pkgs, pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: targetedMgr.Name()})
 					}
-					allowed, skippedResults := splitPinnedTargets(pkgs, ignorePins)
+					allowed, skippedResults, err := splitPinnedTargets(pkgs, ignorePins)
+					if err != nil {
+						return err
+					}
 					for _, sr := range skippedResults {
 						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.pkg.Id)
 					}
@@ -228,6 +257,7 @@ func newUpgradeCmd() *cobra.Command {
 						return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
 					}
 					ordered := orderSelectedPackagesWithRegistry(registry, allowed)
+					maybePrintWingetAgreementsNotice(out, ordered, opts.acceptAgreements)
 					if opts.dryRun {
 						results := append([]upgradeResult{}, skippedResults...)
 						for _, pkg := range ordered {
@@ -285,7 +315,10 @@ func newUpgradeCmd() *cobra.Command {
 					})
 				}
 
-				allowed, pinnedSkipped := splitPinnedTargets(matched, ignorePins)
+				allowed, pinnedSkipped, err := splitPinnedTargets(matched, ignorePins)
+				if err != nil {
+					return err
+				}
 				for _, sr := range pinnedSkipped {
 					fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.pkg.Id)
 				}
@@ -297,6 +330,7 @@ func newUpgradeCmd() *cobra.Command {
 				}
 
 				ordered := orderSelectedPackagesWithRegistry(registry, allowed)
+				maybePrintWingetAgreementsNotice(out, ordered, opts.acceptAgreements)
 				if opts.dryRun {
 					for _, u := range ordered {
 						fmt.Fprintf(out, "[Dry Run] Would upgrade package %s (%s -> %s) using %s.\n", u.Id, u.Version, u.AvailableVersion, u.ManagerName)
@@ -344,7 +378,11 @@ func newUpgradeCmd() *cobra.Command {
 
 			var pinnedCount int
 			if !ignorePins {
-				updates, pinnedCount = filterOutPinned(updates)
+				var err error
+				updates, pinnedCount, err = filterOutPinned(updates)
+				if err != nil {
+					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
+				}
 			}
 
 			if len(updates) == 0 {
@@ -438,6 +476,7 @@ func newUpgradeCmd() *cobra.Command {
 			}
 
 			selectedPackages = orderSelectedPackagesWithRegistry(registry, selectedPackages)
+			maybePrintWingetAgreementsNotice(out, selectedPackages, opts.acceptAgreements)
 
 			if opts.dryRun {
 				fmt.Fprintf(out, "\n[Dry Run] Would upgrade %d selected package(s):\n", len(selectedPackages))

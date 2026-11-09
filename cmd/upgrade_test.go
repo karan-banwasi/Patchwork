@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"text/template"
@@ -187,7 +190,10 @@ func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
 		{Id: "Git.Git", Name: "Git", ManagerName: "scoop"},
 	}
 
-	allowed, skipped := splitPinnedTargets(targets, false)
+	allowed, skipped, err := splitPinnedTargets(targets, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(allowed) != 1 || allowed[0].ManagerName != "scoop" {
 		t.Errorf("expected only scoop Git.Git to be allowed, got: %+v", allowed)
 	}
@@ -195,8 +201,71 @@ func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
 		t.Errorf("expected winget Git.Git to be Skipped (pinned), got: %+v", skipped)
 	}
 
-	allowedForced, skippedForced := splitPinnedTargets(targets, true)
+	allowedForced, skippedForced, err := splitPinnedTargets(targets, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(allowedForced) != 2 || len(skippedForced) != 0 {
 		t.Errorf("expected all targets allowed when ignorePins=true, got allowed=%d, skipped=%d", len(allowedForced), len(skippedForced))
+	}
+}
+
+func TestSplitPinnedTargets_CorruptConfigFailsClosed(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	if err := os.WriteFile(tmpCfg, []byte("{ bad-json: 123"), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	targets := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	_, _, err := splitPinnedTargets(targets, false)
+	if err == nil {
+		t.Fatalf("expected error from splitPinnedTargets on corrupt config, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot verify pinned packages") {
+		t.Errorf("expected fail-closed error message, got: %v", err)
+	}
+
+	// Forced override succeeds
+	allowed, _, err := splitPinnedTargets(targets, true)
+	if err != nil {
+		t.Fatalf("expected forced splitPinnedTargets to succeed, got: %v", err)
+	}
+	if len(allowed) != 1 {
+		t.Errorf("expected 1 allowed target, got %d", len(allowed))
+	}
+}
+
+func TestUpgradeCmd_AcceptAgreementsNotice(t *testing.T) {
+	var buf bytes.Buffer
+	pkgs := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	// When acceptAgreements is true, prints notice
+	maybePrintWingetAgreementsNotice(&buf, pkgs, true)
+	if !strings.Contains(buf.String(), "Notice: Automatically accepting Winget package and source agreements") {
+		t.Errorf("expected agreement notice, got: %s", buf.String())
+	}
+
+	// When acceptAgreements is false, does not print notice
+	buf.Reset()
+	maybePrintWingetAgreementsNotice(&buf, pkgs, false)
+	if buf.Len() != 0 {
+		t.Errorf("expected no notice when acceptAgreements=false, got: %s", buf.String())
+	}
+
+	// When no winget packages are present, does not print notice
+	buf.Reset()
+	nonWinget := []pm.PackageUpdate{
+		{Id: "git", Name: "git", ManagerName: "brew"},
+	}
+	maybePrintWingetAgreementsNotice(&buf, nonWinget, true)
+	if buf.Len() != 0 {
+		t.Errorf("expected no notice for non-winget packages, got: %s", buf.String())
 	}
 }

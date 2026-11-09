@@ -25,6 +25,11 @@ function Assert-Equal {
     }
 }
 
+function Clean-Stderr {
+    param([string]$Raw)
+    return (($Raw -replace '\x1b\[[0-9;]*m', '') -replace '(?m)^\s*\|\s*', ' ' -replace '\s+', ' ').Trim()
+}
+
 Write-Host "Running install.ps1 unit tests..." -ForegroundColor Cyan
 
 # Test 1: Standard SHA256SUMS parsing for pw.exe (x64)
@@ -92,6 +97,154 @@ Assert-Equal "Missing target asset returns null" ([string]$hash9) ""
 $corrupt = "This is not a valid SHA256SUMS file or winget manifest"
 $hash10 = Get-ExpectedChecksum -Content $corrupt -AssetName "pw.exe" -WingetArch "x64"
 Assert-Equal "Corrupted manifest returns null" ([string]$hash10) ""
+
+# Test 11: Test-AttestationProvenance -SkipAttestation returns true
+$res11 = Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" -SkipAttestation
+Assert-Equal "Test-AttestationProvenance -SkipAttestation returns true" "$res11" "True"
+
+# Test 12: Test-AttestationProvenance -RequireAttestation without gh throws
+$threw12 = $false
+try {
+    Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" -RequireAttestation -HasGh:$false
+} catch {
+    $threw12 = $true
+}
+Assert-Equal "Test-AttestationProvenance -RequireAttestation without gh throws" "$threw12" "True"
+
+# Test 13: Test-AttestationProvenance verification failure throws security warning (mock runner)
+$threw13 = $false
+$errMsg13 = ""
+$global:LASTEXITCODE = 0
+try {
+    Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" `
+        -SignerWorkflow "karan-banwasi/Patchwork/.github/workflows/release.yml" `
+        -HasGh:$true `
+        -GhRunner {
+            param($RunnerArgs)
+            return [PSCustomObject]@{
+                Output = "simulated verification error: signature invalid"
+                ExitCode = 1
+            }
+        }
+} catch {
+    $threw13 = $true
+    $errMsg13 = $_.Exception.Message
+}
+Assert-Equal "Test-AttestationProvenance failure throws" "$threw13" "True"
+$hasSecurityWarning = $errMsg13 -like "*SECURITY WARNING*"
+Assert-Equal "Test-AttestationProvenance failure includes SECURITY WARNING" "$hasSecurityWarning" "True"
+
+# Test 14: Test-AttestationProvenance verification success returns true
+$capturedArgs14 = @()
+$global:LASTEXITCODE = 1 # Prove that stale dirty exit code does not pollute successful runner
+$res14 = Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" `
+    -SignerWorkflow "karan-banwasi/Patchwork/.github/workflows/release.yml" `
+    -HasGh:$true `
+    -GhRunner {
+        param($RunnerArgs)
+        $script:capturedArgs14 = $RunnerArgs
+        return [PSCustomObject]@{
+            Output = "Verified OK"
+            ExitCode = 0
+        }
+    }
+Assert-Equal "Test-AttestationProvenance success returns true" "$res14" "True"
+$hasSignerWorkflow = ($script:capturedArgs14 -contains "--signer-workflow") -and ($script:capturedArgs14 -contains "karan-banwasi/Patchwork/.github/workflows/release.yml")
+Assert-Equal "Test-AttestationProvenance passes --signer-workflow" "$hasSignerWorkflow" "True"
+
+# Test 15: Test-AttestationProvenance with both -SkipAttestation and -RequireAttestation throws
+$threw15 = $false
+try {
+    Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" -SkipAttestation -RequireAttestation
+} catch {
+    $threw15 = $true
+}
+Assert-Equal "Test-AttestationProvenance mutually exclusive flags throw" "$threw15" "True"
+
+# Test 16: Test-AttestationProvenance default runner fails on unverified binary (real gh execution)
+$hasGh = [bool](Get-Command gh -ErrorAction SilentlyContinue)
+if ($hasGh) {
+    $dummyPath = [System.IO.Path]::GetTempFileName()
+    "unverified mock binary payload" | Set-Content -Path $dummyPath
+    $threw16 = $false
+    $errMsg16 = ""
+    $global:LASTEXITCODE = 0
+    try {
+        Test-AttestationProvenance -BinaryPath $dummyPath -Repo "karan-banwasi/Patchwork" `
+            -SignerWorkflow "karan-banwasi/Patchwork/.github/workflows/release.yml"
+    } catch {
+        $threw16 = $true
+        $errMsg16 = $_.Exception.Message
+    } finally {
+        Remove-Item -Path $dummyPath -Force -ErrorAction SilentlyContinue
+    }
+    Assert-Equal "Test-AttestationProvenance default runner throws on unverified binary" "$threw16" "True"
+    $hasSecurityWarning16 = $errMsg16 -like "*SECURITY WARNING*"
+    Assert-Equal "Test-AttestationProvenance default runner includes SECURITY WARNING" "$hasSecurityWarning16" "True"
+}
+
+# Test 17: Test-AttestationProvenance handles simple integer exit code from runner
+$threw17 = $false
+$errMsg17 = ""
+$global:LASTEXITCODE = 0
+try {
+    Test-AttestationProvenance -BinaryPath "dummy.exe" -Repo "karan-banwasi/Patchwork" `
+        -SignerWorkflow "karan-banwasi/Patchwork/.github/workflows/release.yml" `
+        -HasGh:$true `
+        -GhRunner {
+            param($RunnerArgs)
+            return 1
+        }
+} catch {
+    $threw17 = $true
+    $errMsg17 = $_.Exception.Message
+}
+Assert-Equal "Test-AttestationProvenance integer exit code failure throws" "$threw17" "True"
+$hasSecurityWarning17 = $errMsg17 -like "*SECURITY WARNING*"
+Assert-Equal "Test-AttestationProvenance integer exit code includes SECURITY WARNING" "$hasSecurityWarning17" "True"
+
+# Test 18: Standalone script early rejection on mutually exclusive flags (-SkipAttestation and -RequireAttestation)
+$currentShell = (Get-Process -Id $PID).Path
+$pinfo18 = New-Object System.Diagnostics.ProcessStartInfo
+$pinfo18.FileName = $currentShell
+$pinfo18.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installScript`" -SkipAttestation -RequireAttestation"
+$pinfo18.RedirectStandardOutput = $true
+$pinfo18.RedirectStandardError = $true
+$pinfo18.UseShellExecute = $false
+
+$proc18 = [System.Diagnostics.Process]::Start($pinfo18)
+$stdout18 = $proc18.StandardOutput.ReadToEnd()
+$stderr18 = $proc18.StandardError.ReadToEnd()
+$proc18.WaitForExit()
+
+Assert-Equal "Standalone script exits 1 on mutually exclusive flags" "$($proc18.ExitCode)" "1"
+$cleanStderr18 = Clean-Stderr $stderr18
+$hasMutexMsg18 = $cleanStderr18 -like "*Cannot specify both -SkipAttestation and -RequireAttestation*"
+Assert-Equal "Standalone script reports mutual exclusivity error" "$hasMutexMsg18" "True"
+$noNetwork18 = ($stdout18 -notlike "*Attempting download*") -and ($stdout18 -notlike "*Downloading release*")
+Assert-Equal "Standalone script rejects mutually exclusive flags before network requests" "$noNetwork18" "True"
+
+# Test 19: Standalone script early rejection on -RequireAttestation when gh is absent from PATH
+$cleanPath = "C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\PowerShell\7"
+$pinfo19 = New-Object System.Diagnostics.ProcessStartInfo
+$pinfo19.FileName = $currentShell
+$pinfo19.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installScript`" -RequireAttestation"
+$pinfo19.RedirectStandardOutput = $true
+$pinfo19.RedirectStandardError = $true
+$pinfo19.UseShellExecute = $false
+$pinfo19.EnvironmentVariables["PATH"] = $cleanPath
+
+$proc19 = [System.Diagnostics.Process]::Start($pinfo19)
+$stdout19 = $proc19.StandardOutput.ReadToEnd()
+$stderr19 = $proc19.StandardError.ReadToEnd()
+$proc19.WaitForExit()
+
+Assert-Equal "Standalone script exits 1 on -RequireAttestation without gh" "$($proc19.ExitCode)" "1"
+$cleanStderr19 = Clean-Stderr $stderr19
+$hasNoGhMsg19 = $cleanStderr19 -like "*GitHub CLI ('gh') is not installed or available on PATH*"
+Assert-Equal "Standalone script reports missing gh error" "$hasNoGhMsg19" "True"
+$noNetwork19 = ($stdout19 -notlike "*Attempting download*") -and ($stdout19 -notlike "*Downloading release*")
+Assert-Equal "Standalone script rejects missing gh before network requests" "$noNetwork19" "True"
 
 $resultColor = if ($failCount -eq 0) { 'Green' } else { 'Red' }
 Write-Host "`nTest Results: $passCount passed, $failCount failed." -ForegroundColor $resultColor

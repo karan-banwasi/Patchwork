@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,125 @@ func TestConfig_UpdateCacheSaveLoad(t *testing.T) {
 
 	if _, ok := LoadUpdateCache(0); ok {
 		t.Errorf("expected cache miss when maxAge is 0")
+	}
+}
+
+func TestConfig_SaveTo_AtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	cfg := &Config{
+		PinnedPackages: []string{"Git.Git"},
+	}
+
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config atomically: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read dir: %v", err)
+	}
+
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config-") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("found leftover temporary file from atomic write: %s", e.Name())
+		}
+	}
+
+	// Overwrite existing file atomically
+	cfg.Pin("Microsoft.VisualStudioCode")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("failed to overwrite config atomically: %v", err)
+	}
+
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read dir: %v", err)
+	}
+
+	foundConfig := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config-") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("found leftover temporary file after overwrite: %s", e.Name())
+		}
+		if e.Name() == "config.json" {
+			foundConfig = true
+		}
+	}
+	if !foundConfig {
+		t.Errorf("expected config.json to exist")
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if len(loaded.PinnedPackages) != 2 {
+		t.Errorf("expected 2 pinned packages, got %d", len(loaded.PinnedPackages))
+	}
+}
+
+func TestConfig_LoadFrom_CorruptFailClosed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Write invalid JSON
+	if err := os.WriteFile(path, []byte("{ invalid-json-content: true, "), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	cfg, err := LoadFrom(path)
+	if err == nil {
+		t.Fatalf("expected error loading corrupted config, got nil error and cfg: %+v", cfg)
+	}
+	if cfg != nil {
+		t.Errorf("expected nil config on error, got: %+v", cfg)
+	}
+}
+
+func TestConfig_AcceptAgreementsPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Default should be true
+	var emptyCfg *Config
+	if !emptyCfg.ShouldAcceptAgreements() {
+		t.Errorf("expected nil config ShouldAcceptAgreements to be true")
+	}
+
+	cfg1 := &Config{}
+	if !cfg1.ShouldAcceptAgreements() {
+		t.Errorf("expected unspecified AcceptAgreements to default to true")
+	}
+
+	// Set to false
+	fVal := false
+	cfg1.AcceptAgreements = &fVal
+	if err := cfg1.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loaded.ShouldAcceptAgreements() {
+		t.Errorf("expected loaded config ShouldAcceptAgreements to be false")
+	}
+
+	// Set to true
+	tVal := true
+	loaded.AcceptAgreements = &tVal
+	if err := loaded.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	loaded2, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if !loaded2.ShouldAcceptAgreements() {
+		t.Errorf("expected loaded config ShouldAcceptAgreements to be true")
 	}
 }

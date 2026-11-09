@@ -3,13 +3,17 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
@@ -54,6 +58,47 @@ type ghAttestationsResponse struct {
 	Attestations []struct {
 		Bundle json.RawMessage `json:"bundle"`
 	} `json:"attestations"`
+}
+
+type sigstoreBundle struct {
+	MediaType            string                 `json:"mediaType"`
+	VerificationMaterial *bundleVerificationMat `json:"verificationMaterial"`
+	DSSEEnvelope         *dsseEnvelope          `json:"dsseEnvelope"`
+}
+
+type bundleVerificationMat struct {
+	Certificate          *bundleCert      `json:"certificate"`
+	X509CertificateChain *bundleCertChain `json:"x509CertificateChain"`
+}
+
+type bundleCert struct {
+	RawBytes string `json:"rawBytes"`
+}
+
+type bundleCertChain struct {
+	Certificates []bundleCert `json:"certificates"`
+}
+
+type dsseEnvelope struct {
+	Payload     string          `json:"payload"`
+	PayloadType string          `json:"payloadType"`
+	Signatures  []dsseSignature `json:"signatures"`
+}
+
+type dsseSignature struct {
+	KeyID string `json:"keyid"`
+	Sig   string `json:"sig"`
+}
+
+type inTotoStatement struct {
+	Type          string          `json:"_type"`
+	Subject       []inTotoSubject `json:"subject"`
+	PredicateType string          `json:"predicateType"`
+}
+
+type inTotoSubject struct {
+	Name   string            `json:"name"`
+	Digest map[string]string `json:"digest"`
 }
 
 // isNewerVersion compares two semantic version tags (e.g. "v1.0.5" vs "v1.0.4").
@@ -245,15 +290,139 @@ func cleanupStaleUpdateFiles(exeDir, exePath string) {
 	}
 }
 
+func verifyAttestationBundle(bundleRaw []byte, repo, pinnedWorkflow, actualSHA string) error {
+	var bundle sigstoreBundle
+	if err := json.Unmarshal(bundleRaw, &bundle); err != nil {
+		return fmt.Errorf("failed to parse sigstore bundle: %w", err)
+	}
+
+	var certBytes []byte
+	if bundle.VerificationMaterial != nil {
+		if bundle.VerificationMaterial.Certificate != nil && bundle.VerificationMaterial.Certificate.RawBytes != "" {
+			b, err := base64.StdEncoding.DecodeString(bundle.VerificationMaterial.Certificate.RawBytes)
+			if err == nil {
+				certBytes = b
+			}
+		} else if bundle.VerificationMaterial.X509CertificateChain != nil && len(bundle.VerificationMaterial.X509CertificateChain.Certificates) > 0 {
+			b, err := base64.StdEncoding.DecodeString(bundle.VerificationMaterial.X509CertificateChain.Certificates[0].RawBytes)
+			if err == nil {
+				certBytes = b
+			}
+		}
+	}
+	if len(certBytes) == 0 {
+		return errors.New("missing certificate in attestation verification material")
+	}
+
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Verify signer workflow identity strictly in certificate Subject Alternative Name (SAN) URIs.
+	// In Sigstore Fulcio certificates for GitHub Actions provenance, the SAN URI format is:
+	// https://github.com/<owner>/<repo>/<workflow_path>@<ref>
+	// We strictly anchor the scheme, host, and workflow path before any '@' ref delimiter.
+	cleanedPinnedWorkflow := strings.Trim(pinnedWorkflow, "/")
+	expectedURI := "https://github.com/" + cleanedPinnedWorkflow
+	expectedPath := "/" + cleanedPinnedWorkflow
+
+	workflowMatched := false
+	for _, u := range cert.URIs {
+		if u == nil {
+			continue
+		}
+		if u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") {
+			continue
+		}
+		if u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+			continue
+		}
+
+		raw := u.String()
+		if idx := strings.Index(raw, "@"); idx != -1 {
+			if idx == len(raw)-1 {
+				continue
+			}
+			raw = raw[:idx]
+		}
+
+		path := u.Path
+		if idx := strings.Index(path, "@"); idx != -1 {
+			path = path[:idx]
+		}
+
+		if raw == expectedURI && path == expectedPath {
+			workflowMatched = true
+			break
+		}
+	}
+	if !workflowMatched {
+		return fmt.Errorf("signing certificate does not match expected signer workflow %q", pinnedWorkflow)
+	}
+
+	pubKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("unsupported public key type in certificate: %T", cert.PublicKey)
+	}
+
+	if bundle.DSSEEnvelope == nil || len(bundle.DSSEEnvelope.Signatures) == 0 {
+		return errors.New("missing DSSE envelope or signatures in bundle")
+	}
+
+	payloadBytes, err := base64.StdEncoding.DecodeString(bundle.DSSEEnvelope.Payload)
+	if err != nil {
+		return fmt.Errorf("failed to decode DSSE payload: %w", err)
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(bundle.DSSEEnvelope.Signatures[0].Sig)
+	if err != nil {
+		return fmt.Errorf("failed to decode DSSE signature: %w", err)
+	}
+
+	pae := []byte(fmt.Sprintf("DSSEv1 %d %s %d ", len(bundle.DSSEEnvelope.PayloadType), bundle.DSSEEnvelope.PayloadType, len(payloadBytes)))
+	pae = append(pae, payloadBytes...)
+	paeHash := sha256.Sum256(pae)
+
+	verifiedSig := ecdsa.VerifyASN1(pubKey, paeHash[:], sigBytes)
+	if !verifiedSig && len(sigBytes) == 64 {
+		r := new(big.Int).SetBytes(sigBytes[:32])
+		s := new(big.Int).SetBytes(sigBytes[32:])
+		verifiedSig = ecdsa.Verify(pubKey, paeHash[:], r, s)
+	}
+	if !verifiedSig {
+		return errors.New("cryptographic signature verification failed")
+	}
+
+	var stmt inTotoStatement
+	if err := json.Unmarshal(payloadBytes, &stmt); err != nil {
+		return fmt.Errorf("failed to parse in-toto statement: %w", err)
+	}
+
+	digestMatched := false
+	for _, subj := range stmt.Subject {
+		if strings.EqualFold(subj.Digest["sha256"], actualSHA) {
+			digestMatched = true
+			break
+		}
+	}
+	if !digestMatched {
+		return fmt.Errorf("attestation statement subject digests do not match binary sha256 %s", actualSHA)
+	}
+
+	return nil
+}
+
 // verifyAttestationGate verifies build provenance of the downloaded binary.
 // Verification fails closed: any mismatch or missing attestation blocks the update unless skipped explicitly.
 func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL, repo, filePath, actualSHA string, token string) error {
+	pinnedWorkflow := fmt.Sprintf("%s/.github/workflows/release.yml", repo)
+
 	if apiBaseURL == defaultGitHubAPI {
 		if ghExe, err := exec.LookPath("gh"); err == nil {
 			attCtx, attCancel := context.WithTimeout(ctx, metadataTimeout)
 			defer attCancel()
 			var outBuf bytes.Buffer
-			attCmd := exec.CommandContext(attCtx, ghExe, "attestation", "verify", filePath, "--repo", repo)
+			attCmd := exec.CommandContext(attCtx, ghExe, "attestation", "verify", filePath, "--repo", repo, "--signer-workflow", pinnedWorkflow)
 			attCmd.Stdout = &outBuf
 			attCmd.Stderr = &outBuf
 			if err := attCmd.Run(); err != nil {
@@ -297,10 +466,37 @@ func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL,
 	if len(attResp.Attestations) == 0 {
 		return fmt.Errorf("zero attestations found for digest %s; refusing to update without authentic provenance", actualSHA)
 	}
+
+	var lastErr error
+	verified := false
+	for i, att := range attResp.Attestations {
+		if len(att.Bundle) == 0 {
+			lastErr = fmt.Errorf("attestation bundle [%d] is empty", i)
+			continue
+		}
+		if err := verifyAttestationBundle(att.Bundle, repo, pinnedWorkflow, actualSHA); err != nil {
+			lastErr = err
+			continue
+		}
+		verified = true
+		break
+	}
+
+	if !verified {
+		if lastErr != nil {
+			return fmt.Errorf("cryptographic verification of build provenance attestation failed: %w", lastErr)
+		}
+		return fmt.Errorf("zero valid cryptographic attestations found for digest %s", actualSHA)
+	}
+
 	return nil
 }
 
 func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
+	if opts.skipAttestation && opts.requireAttestation {
+		return fmt.Errorf("cannot specify both --skip-attestation and --require-attestation")
+	}
+
 	if !opts.force {
 		if err := detectManagedInstall(exePath); err != nil {
 			return err

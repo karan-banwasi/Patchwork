@@ -22,8 +22,13 @@ import (
 
 var version = "dev" // overridden by -ldflags
 
+var registryOverride *pm.Registry
+
 // getDefaultRegistry initializes the default registry of supported package managers for the current OS.
 func getDefaultRegistry() *pm.Registry {
+	if registryOverride != nil {
+		return registryOverride
+	}
 	return getDefaultRegistryForOS(runtime.GOOS)
 }
 

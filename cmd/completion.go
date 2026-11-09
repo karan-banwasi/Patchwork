@@ -26,7 +26,7 @@ func completeAvailablePackageIDs(cmd *cobra.Command, args []string, toComplete s
 	if !ok {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	updates, _ = filterOutPinned(updates)
+	updates, _, _ = filterOutPinned(updates)
 	var completions []string
 	for _, u := range updates {
 		if alreadySelected[strings.ToLower(u.Id)] {

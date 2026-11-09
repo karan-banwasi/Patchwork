@@ -10,10 +10,14 @@ import (
 )
 
 // filterOutPinned removes packages that are pinned in the user's configuration.
-func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int) {
+// It fails closed: if the configuration file exists but cannot be parsed, it returns an error.
+func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int, error) {
 	cfg, err := config.Load()
-	if err != nil || len(cfg.PinnedPackages) == 0 {
-		return updates, 0
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to load configuration: %w", err)
+	}
+	if len(cfg.PinnedPackages) == 0 {
+		return updates, 0, nil
 	}
 	var filtered []pm.PackageUpdate
 	var skipped int
@@ -24,7 +28,7 @@ func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int) {
 		}
 		filtered = append(filtered, u)
 	}
-	return filtered, skipped
+	return filtered, skipped, nil
 }
 
 func newPinCmd() *cobra.Command {

@@ -13,7 +13,17 @@ import (
 
 // Config represents the persistent user configuration for Patchwork.
 type Config struct {
-	PinnedPackages []string `json:"pinned_packages"`
+	PinnedPackages   []string `json:"pinned_packages"`
+	AcceptAgreements *bool    `json:"accept_agreements,omitempty"`
+}
+
+// ShouldAcceptAgreements returns whether package manager agreements should be automatically accepted.
+// Defaults to true when unspecified.
+func (c *Config) ShouldAcceptAgreements() bool {
+	if c == nil || c.AcceptAgreements == nil {
+		return true
+	}
+	return *c.AcceptAgreements
 }
 
 // ConfigPath returns the path to the Patchwork config file.
@@ -62,16 +72,48 @@ func (c *Config) Save() error {
 	return c.SaveTo(path)
 }
 
-// SaveTo writes the configuration to a specific path with user-only permissions (0700/0600).
-func (c *Config) SaveTo(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
+	tmp, err := os.CreateTemp(dir, "config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	closed = true
+
+	if err := os.Chmod(tmpName, perm); err != nil {
+		// Non-fatal on Windows
+	}
+	return os.Rename(tmpName, path)
+}
+
+// SaveTo writes the configuration to a specific path with user-only permissions (0700/0600) atomically.
+func (c *Config) SaveTo(path string) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return writeAtomic(path, data, 0600)
 }
 
 func normalizePinEntry(raw string) string {
@@ -168,7 +210,7 @@ func CachePath() string {
 	return filepath.Join(os.TempDir(), "patchwork-updates-cache.json")
 }
 
-// SaveUpdateCache writes the latest update check results to the cache file with 0700/0600 permissions.
+// SaveUpdateCache writes the latest update check results to the cache file with 0700/0600 permissions atomically.
 func SaveUpdateCache(updates []pm.PackageUpdate) error {
 	cache := UpdateCache{
 		UpdatedAt: time.Now(),
@@ -178,11 +220,7 @@ func SaveUpdateCache(updates []pm.PackageUpdate) error {
 	if err != nil {
 		return err
 	}
-	path := CachePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0600)
+	return writeAtomic(CachePath(), data, 0600)
 }
 
 // LoadUpdateCache reads cached package updates if the cache file exists and is newer than maxAge.

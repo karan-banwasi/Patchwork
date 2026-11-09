@@ -3,16 +3,25 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -27,6 +36,90 @@ func makeResponse(status int, body []byte) *http.Response {
 		Body:       io.NopCloser(bytes.NewReader(body)),
 		Header:     make(http.Header),
 	}
+}
+
+func createTestSigstoreBundle(t *testing.T, targetDigestHex, workflowURL string, corruptSig bool) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ECDSA key: %v", err)
+	}
+
+	u, err := url.Parse(workflowURL)
+	if err != nil {
+		t.Fatalf("failed to parse workflow URL: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "GitHub Actions",
+		},
+		NotBefore: time.Now().Add(-1 * time.Hour),
+		NotAfter:  time.Now().Add(1 * time.Hour),
+		URIs:      []*url.URL{u},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	stmt := inTotoStatement{
+		Type: "https://in-toto.io/Statement/v1",
+		Subject: []inTotoSubject{
+			{
+				Name: "pw.exe",
+				Digest: map[string]string{
+					"sha256": strings.ToLower(targetDigestHex),
+				},
+			},
+		},
+		PredicateType: "https://slsa.dev/provenance/v1",
+	}
+	payloadBytes, err := json.Marshal(stmt)
+	if err != nil {
+		t.Fatalf("failed to marshal in-toto statement: %v", err)
+	}
+
+	payloadType := "application/vnd.in-toto+json"
+	pae := []byte(fmt.Sprintf("DSSEv1 %d %s %d ", len(payloadType), payloadType, len(payloadBytes)))
+	pae = append(pae, payloadBytes...)
+	paeHash := sha256.Sum256(pae)
+
+	sig, err := ecdsa.SignASN1(rand.Reader, priv, paeHash[:])
+	if err != nil {
+		t.Fatalf("failed to sign DSSE PAE: %v", err)
+	}
+
+	if corruptSig {
+		sig[len(sig)-1] ^= 0xFF
+	}
+
+	bundle := sigstoreBundle{
+		MediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+		VerificationMaterial: &bundleVerificationMat{
+			Certificate: &bundleCert{
+				RawBytes: base64.StdEncoding.EncodeToString(certDER),
+			},
+		},
+		DSSEEnvelope: &dsseEnvelope{
+			Payload:     base64.StdEncoding.EncodeToString(payloadBytes),
+			PayloadType: payloadType,
+			Signatures: []dsseSignature{
+				{
+					KeyID: "test-key-id",
+					Sig:   base64.StdEncoding.EncodeToString(sig),
+				},
+			},
+		},
+	}
+
+	bundleBytes, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("failed to marshal bundle: %v", err)
+	}
+	return bundleBytes
 }
 
 func TestIsNewerVersion(t *testing.T) {
@@ -236,10 +329,13 @@ func TestPerformSelfUpdate_ChecksumVerification(t *testing.T) {
 			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				switch {
 				case strings.Contains(r.URL.Path, "attestations"):
+					validBundle := createTestSigstoreBundle(t, validHash, "https://github.com/karan-banwasi/Patchwork/.github/workflows/release.yml@refs/tags/v9.9.9", false)
 					attResp := ghAttestationsResponse{
-						Attestations: make([]struct {
+						Attestations: []struct {
 							Bundle json.RawMessage `json:"bundle"`
-						}, 1),
+						}{
+							{Bundle: validBundle},
+						},
 					}
 					b, _ := json.Marshal(attResp)
 					return makeResponse(http.StatusOK, b), nil
@@ -620,4 +716,130 @@ func TestPerformSelfUpdate_SHA256SUMS_Fallback(t *testing.T) {
 			t.Errorf("expected original binary to remain intact, got: %q", string(gotBytes))
 		}
 	})
+}
+
+func TestSelfUpdate_AttestationFlags_MutuallyExclusive(t *testing.T) {
+	tmpDir := t.TempDir()
+	exePath := filepath.Join(tmpDir, "pw.exe")
+	_ = os.WriteFile(exePath, []byte("old"), 0755)
+
+	var out bytes.Buffer
+	err := performSelfUpdate(context.Background(), http.DefaultClient, "https://api.github.test", "v1.0.0", "windows", "amd64", exePath, selfUpdateOptions{
+		skipAttestation:    true,
+		requireAttestation: true,
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "cannot specify both --skip-attestation and --require-attestation") {
+		t.Fatalf("expected mutual exclusivity error, got: %v", err)
+	}
+}
+
+func TestSelfUpdate_CryptographicBundleVerification(t *testing.T) {
+	payload := []byte("cryptographic-test-payload")
+	sum := sha256.Sum256(payload)
+	actualSHA := strings.ToUpper(hex.EncodeToString(sum[:]))
+	repo := "karan-banwasi/Patchwork"
+	pinnedWorkflow := repo + "/.github/workflows/release.yml"
+
+	t.Run("valid bundle passes verification", func(t *testing.T) {
+		bundle := createTestSigstoreBundle(t, actualSHA, "https://github.com/"+pinnedWorkflow+"@refs/tags/v1.0.0", false)
+		if err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA); err != nil {
+			t.Fatalf("expected valid bundle verification to pass, got: %v", err)
+		}
+	})
+
+	t.Run("tampered signature fails closed", func(t *testing.T) {
+		bundle := createTestSigstoreBundle(t, actualSHA, "https://github.com/"+pinnedWorkflow+"@refs/tags/v1.0.0", true)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "cryptographic signature verification failed") {
+			t.Fatalf("expected cryptographic signature failure, got: %v", err)
+		}
+	})
+
+	t.Run("digest mismatch fails closed", func(t *testing.T) {
+		differentHash := strings.Repeat("A", 64)
+		bundle := createTestSigstoreBundle(t, differentHash, "https://github.com/"+pinnedWorkflow+"@refs/tags/v1.0.0", false)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "attestation statement subject digests do not match") {
+			t.Fatalf("expected digest mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("wrong signer workflow fails closed", func(t *testing.T) {
+		wrongWorkflow := repo + "/.github/workflows/pr-check.yml"
+		bundle := createTestSigstoreBundle(t, actualSHA, "https://github.com/"+wrongWorkflow+"@refs/tags/v1.0.0", false)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "signing certificate does not match expected signer workflow") {
+			t.Fatalf("expected wrong signer workflow error, got: %v", err)
+		}
+	})
+
+	t.Run("untrusted repository fails closed", func(t *testing.T) {
+		attackerWorkflow := "attacker/Patchwork/.github/workflows/release.yml"
+		bundle := createTestSigstoreBundle(t, actualSHA, "https://github.com/"+attackerWorkflow+"@refs/tags/v1.0.0", false)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "signing certificate does not match expected signer workflow") {
+			t.Fatalf("expected untrusted repository error, got: %v", err)
+		}
+	})
+
+	t.Run("untrusted repository with matching suffix fails closed", func(t *testing.T) {
+		attackerWorkflow := "attacker-karan-banwasi/Patchwork/.github/workflows/release.yml"
+		bundle := createTestSigstoreBundle(t, actualSHA, "https://github.com/"+attackerWorkflow+"@refs/tags/v1.0.0", false)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "signing certificate does not match expected signer workflow") {
+			t.Fatalf("expected untrusted repository suffix failure, got: %v", err)
+		}
+	})
+
+	t.Run("untrusted repository spoofing workflow in ref fails closed", func(t *testing.T) {
+		evilURI := "https://github.com/attacker/malware/.github/workflows/attack.yml@refs/heads/karan-banwasi/Patchwork/.github/workflows/release.yml"
+		bundle := createTestSigstoreBundle(t, actualSHA, evilURI, false)
+		err := verifyAttestationBundle(bundle, repo, pinnedWorkflow, actualSHA)
+		if err == nil || !strings.Contains(err.Error(), "signing certificate does not match expected signer workflow") {
+			t.Fatalf("expected untrusted repository ref spoof failure, got: %v", err)
+		}
+	})
+}
+
+func TestSelfUpdate_RequireAttestation_FailsWhenMissing(t *testing.T) {
+	baseURL := "https://mock.github.test"
+	payload := []byte("binary-payload")
+	sum := sha256.Sum256(payload)
+	validHash := strings.ToUpper(hex.EncodeToString(sum[:]))
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case strings.Contains(r.URL.Path, "attestations"):
+				return makeResponse(http.StatusNotFound, []byte(`{"message":"Not Found"}`)), nil
+			case strings.HasSuffix(r.URL.Path, "SHA256SUMS"):
+				manifest := fmt.Sprintf("%s  pw.exe\n", strings.ToLower(validHash))
+				return makeResponse(http.StatusOK, []byte(manifest)), nil
+			case strings.HasSuffix(r.URL.Path, "pw.exe"):
+				return makeResponse(http.StatusOK, payload), nil
+			default:
+				rel := ghRelease{
+					TagName: "v9.9.9",
+					Assets: []ghAsset{
+						{Name: "pw.exe", BrowserDownloadURL: baseURL + "/pw.exe"},
+						{Name: "SHA256SUMS", BrowserDownloadURL: baseURL + "/SHA256SUMS"},
+					},
+				}
+				b, _ := json.Marshal(rel)
+				return makeResponse(http.StatusOK, b), nil
+			}
+		}),
+	}
+
+	tmpDir := t.TempDir()
+	exePath := filepath.Join(tmpDir, "pw.exe")
+	_ = os.WriteFile(exePath, []byte("old"), 0755)
+
+	var out bytes.Buffer
+	err := performSelfUpdate(context.Background(), client, baseURL, "v1.0.0", "windows", "amd64", exePath, selfUpdateOptions{
+		requireAttestation: true,
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "provenance attestation verification gate failed") {
+		t.Fatalf("expected requireAttestation failure on 404, got: %v", err)
+	}
 }

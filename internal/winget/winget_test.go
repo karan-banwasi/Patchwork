@@ -356,5 +356,8 @@ func TestBuildUpgradeArgsWithOptions_DisableAgreements(t *testing.T) {
 		if strings.HasPrefix(a, "--accept-") {
 			t.Errorf("expected agreement flags to be omitted when acceptAgreements=false, got: %v", args)
 		}
+		if a == "--silent" {
+			t.Errorf("expected --silent to be omitted when acceptAgreements=false, got: %v", args)
+		}
 	}
 }

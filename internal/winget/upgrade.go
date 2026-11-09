@@ -29,10 +29,10 @@ func buildUpgradeArgs(id string) []string {
 // buildUpgradeArgsWithOptions constructs the winget command-line arguments for upgrading a package.
 func buildUpgradeArgsWithOptions(id string, acceptAgreements bool) []string {
 	args := []string{"upgrade", "--id", id, "--exact"}
-	if !shouldOmitSilent(id) {
-		args = append(args, "--silent")
-	}
 	if acceptAgreements {
+		if !shouldOmitSilent(id) {
+			args = append(args, "--silent")
+		}
 		args = append(args, "--accept-source-agreements", "--accept-package-agreements")
 	}
 	return args

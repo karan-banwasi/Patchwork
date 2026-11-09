@@ -3,7 +3,9 @@
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"),
     [string]$Repo = "karan-banwasi/Patchwork",
-    [switch]$FunctionsOnly
+    [switch]$FunctionsOnly,
+    [switch]$SkipAttestation,
+    [switch]$RequireAttestation
 )
 
 # Force TLS 1.2 / TLS 1.3 for GitHub compatibility on Windows PowerShell
@@ -41,12 +43,102 @@ function Get-ExpectedChecksum {
     return $null
 }
 
+function Test-AttestationProvenance {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BinaryPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Repo,
+        [string]$SignerWorkflow,
+        [switch]$SkipAttestation,
+        [switch]$RequireAttestation,
+        [bool]$HasGh = [bool](Get-Command gh -ErrorAction SilentlyContinue),
+        [scriptblock]$GhRunner = {
+            param($RunnerArgs)
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $out = & gh @RunnerArgs 2>&1
+                $code = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } elseif ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+                return [PSCustomObject]@{
+                    Output = ($out | Out-String).Trim()
+                    ExitCode = $code
+                }
+            } finally {
+                $ErrorActionPreference = $prevEap
+            }
+        }
+    )
+
+    if ($SkipAttestation -and $RequireAttestation) {
+        throw "Cannot specify both -SkipAttestation and -RequireAttestation."
+    }
+
+    if ($SkipAttestation) {
+        Write-Warning "Skipping build provenance attestation verification (-SkipAttestation)."
+        return $true
+    }
+
+    if (-not $HasGh) {
+        if ($RequireAttestation) {
+            throw "Attestation verification required (-RequireAttestation), but GitHub CLI ('gh') is not installed or available on PATH."
+        }
+        Write-Verbose "GitHub CLI ('gh') not found; skipping attestation check."
+        return $true
+    }
+
+    $verifyArgs = @("attestation", "verify", $BinaryPath, "--repo", $Repo)
+    if ($SignerWorkflow) {
+        $verifyArgs += @("--signer-workflow", $SignerWorkflow)
+    }
+
+    Write-Host "Verifying GitHub build provenance attestation..." -ForegroundColor Cyan
+    $result = & $GhRunner $verifyArgs
+
+    $runnerExitCode = 0
+    $detail = ""
+
+    if ($result -is [PSCustomObject] -and ($null -ne $result.PSObject.Properties['ExitCode'])) {
+        $runnerExitCode = [int]$result.ExitCode
+        $detail = if ($null -ne $result.PSObject.Properties['Output']) { [string]$result.Output } else { "" }
+    } elseif ($result -is [int]) {
+        $runnerExitCode = [int]$result
+        $detail = ""
+    } elseif ($result -is [System.Collections.IEnumerable] -and -not ($result -is [string]) -and ($result.Count -gt 0) -and ($result[-1] -is [int])) {
+        $runnerExitCode = [int]$result[-1]
+        $detail = ($result[0..($result.Count - 2)] | Out-String).Trim()
+    } else {
+        $runnerExitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { $LASTEXITCODE }
+        $detail = ($result | Out-String).Trim()
+    }
+
+    if ($runnerExitCode -ne 0) {
+        throw "SECURITY WARNING: GitHub build provenance attestation verification failed.`nError: $detail`nRefusing to install unverified binary. (Pass -SkipAttestation to bypass if you trust this binary.)"
+    }
+
+    Write-Host "Verified GitHub build provenance attestation." -ForegroundColor Green
+    return $true
+}
+
 # If dot-sourced or called with -FunctionsOnly, return early after defining functions
 if ($FunctionsOnly -or $MyInvocation.InvocationName -eq '.') {
     return
 }
 
 $ErrorActionPreference = "Stop"
+
+# Early parameter validation and preflight checks before any network or file operations
+if ($SkipAttestation -and $RequireAttestation) {
+    Write-Error "Cannot specify both -SkipAttestation and -RequireAttestation."
+    exit 1
+}
+
+$hasGh = [bool](Get-Command gh -ErrorAction SilentlyContinue)
+if ($RequireAttestation -and -not $hasGh) {
+    Write-Error "Attestation verification required (-RequireAttestation), but GitHub CLI ('gh') is not installed or available on PATH."
+    exit 1
+}
 
 $repo = $Repo
 $installDir = $InstallDir
@@ -77,7 +169,6 @@ $tmpManifest = Join-Path $env:TEMP "pw-$tmpId.manifest"
 Write-Host "Installing Patchwork (pw) for $arch..." -ForegroundColor Cyan
 
 $downloaded = $false
-$hasGh = [bool](Get-Command gh -ErrorAction SilentlyContinue)
 
 # 1. Try downloading latest stable release via GitHub CLI
 if ($hasGh) {
@@ -173,12 +264,9 @@ try {
     }
     Write-Host "Verified SHA256 checksum ($($actualHash.Substring(0, 12))...)." -ForegroundColor Green
 
-    if ($hasGh) {
-        & gh attestation verify $tmpExe --repo $repo 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Verified GitHub build provenance attestation." -ForegroundColor Green
-        }
-    }
+    $signerWorkflow = "$repo/.github/workflows/release.yml"
+    Test-AttestationProvenance -BinaryPath $tmpExe -Repo $repo -SignerWorkflow $signerWorkflow `
+        -SkipAttestation:$SkipAttestation -RequireAttestation:$RequireAttestation -HasGh:$hasGh
 
     Move-Item -Path $tmpExe -Destination $exePath -Force
     Remove-Item -Path $tmpManifest -Force -ErrorAction SilentlyContinue
@@ -191,34 +279,48 @@ try {
 }
 
 # Update User PATH if needed
-$userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+try {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+} catch {
+    $userPath = $null
+}
 $cleanUserPath = if ($userPath) { $userPath.TrimEnd(';') } else { "" }
 if (($cleanUserPath -split ';') -notcontains $installDir) {
     Write-Host "Adding $installDir to User PATH..." -ForegroundColor Yellow
     $newUserPath = if ([string]::IsNullOrWhitespace($cleanUserPath)) { $installDir } else { "$cleanUserPath;$installDir" }
-    [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
-    $env:PATH = if ([string]::IsNullOrWhitespace($env:PATH)) { $installDir } else { "$($env:PATH.TrimEnd(';'));$installDir" }
-
-    # Broadcast WM_SETTINGCHANGE so running terminal windows update environment without restarting
+    
+    $pathUpdated = $false
     try {
-        if (-not ('Win32.NativeMethods' -as [type])) {
-            Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
-                [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-                public static extern IntPtr SendMessageTimeout(
-                    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,
-                    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
-"@
-        }
-        $HWND_BROADCAST = [IntPtr]0xffff
-        $WM_SETTINGCHANGE = 0x001A
-        $SMTO_ABORTIFHUNG = 0x0002
-        $result = [UIntPtr]::Zero
-        [Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null
+        [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
+        $pathUpdated = $true
     } catch {
-        # Ignore notification failures if P/Invoke is restricted
+        Write-Warning "Could not update User PATH in registry: $($_.Exception.Message). Please add $installDir to PATH manually."
     }
 
-    Write-Host "PATH updated successfully." -ForegroundColor Green
+    $env:PATH = if ([string]::IsNullOrWhitespace($env:PATH)) { $installDir } else { "$($env:PATH.TrimEnd(';'));$installDir" }
+
+    if ($pathUpdated) {
+        # Broadcast WM_SETTINGCHANGE so running terminal windows update environment without restarting
+        try {
+            if (-not ('Win32.NativeMethods' -as [type])) {
+                Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
+                    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+                    public static extern IntPtr SendMessageTimeout(
+                        IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,
+                        uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+"@
+            }
+            $HWND_BROADCAST = [IntPtr]0xffff
+            $WM_SETTINGCHANGE = 0x001A
+            $SMTO_ABORTIFHUNG = 0x0002
+            $result = [UIntPtr]::Zero
+            [Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null
+        } catch {
+            # Ignore notification failures if P/Invoke is restricted
+        }
+
+        Write-Host "PATH updated successfully." -ForegroundColor Green
+    }
 }
 
 Write-Host "`nPatchwork has been installed successfully!" -ForegroundColor Green

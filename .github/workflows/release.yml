@@ -74,22 +74,26 @@ jobs:
         run: go vet ./...
         
       - name: Run go test
+        if: matrix.os != 'ubuntu-latest'
         run: go test -v ./...
+
+      - name: Run go test (with race detector & coverage)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Run govulncheck
         if: matrix.os == 'ubuntu-latest'
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   release:
     needs: test
-    if: (github.event_name == 'workflow_dispatch') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
     env:
-      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
       WINGET_PUBLISH: ${{ vars.WINGET_PUBLISH || vars.WINGET_ENABLED || vars.ENABLE_WINGET_PUBLISH }}
       BUMP_TYPE: ${{ github.event.inputs.bump || 'patch' }}
       
@@ -107,6 +111,7 @@ jobs:
           check-latest: true
 
       - name: Build and Create Release
+        id: build_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -151,6 +156,8 @@ jobs:
           fi
           
           echo "Release tag: $NEW_TAG"
+          echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           
           # Generate Windows resource (.syso) files stamped with the exact release version
           go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64,arm64,386 --product-version "$NEW_VERSION" --file-version "$NEW_VERSION"
@@ -202,7 +209,7 @@ jobs:
             echo "ManifestVersion: 1.6.0"
           } > KaranBanwasi.Patchwork.installer.yaml
           
-          # Create a GitHub Release with the compiled binaries and Winget manifests attached
+          # Create a GitHub Release as a draft with the compiled binaries and Winget manifests attached
           gh release create "$NEW_TAG" \
             pw.exe pw-arm64.exe \
             pw-darwin-arm64 pw-darwin-amd64 \
@@ -211,7 +218,7 @@ jobs:
             KaranBanwasi.Patchwork.yaml \
             KaranBanwasi.Patchwork.locale.en-US.yaml \
             KaranBanwasi.Patchwork.installer.yaml \
-            --title "Release $NEW_TAG" --generate-notes
+            --title "Release $NEW_TAG" --generate-notes --draft
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v2.2.0
@@ -225,15 +232,26 @@ jobs:
             pw-linux-arm64
             SHA256SUMS
 
+      - name: Publish Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.build_release.outputs.tag }}
+        run: |
+          gh release edit "$NEW_TAG" --draft=false
+
       - name: Publish to winget-pkgs
-        if: env.WINGET_TOKEN != '' && (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')
+        if: secrets.WINGET_TOKEN != '' && (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')
         continue-on-error: true
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
           GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          NEW_VERSION: ${{ steps.build_release.outputs.version }}
+          NEW_TAG: ${{ steps.build_release.outputs.tag }}
         run: |
-          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
-          NEW_VERSION=${LATEST_TAG#v}
+          if [ -z "$NEW_VERSION" ]; then
+            LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+            NEW_VERSION=${LATEST_TAG#v}
+          fi
           PKG_ID="KaranBanwasi.Patchwork"
           
           GH_USER=$(gh api user --jq .login)

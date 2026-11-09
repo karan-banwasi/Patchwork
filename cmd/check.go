@@ -90,7 +90,11 @@ func newCheckCmd() *cobra.Command {
 			// Filter pinned packages unless explicitly requested
 			pinnedCount := 0
 			if !opts.includePinned {
-				updates, pinnedCount = filterOutPinned(updates)
+				var err error
+				updates, pinnedCount, err = filterOutPinned(updates)
+				if err != nil {
+					return fmt.Errorf("cannot verify pinned packages: %w (use --include-pinned to bypass)", err)
+				}
 			}
 
 			if opts.json {

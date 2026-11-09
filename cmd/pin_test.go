@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 func TestPinUnpinPinnedCmds(t *testing.T) {
@@ -57,5 +60,43 @@ func TestPinUnpinPinnedCmds(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `Unpinned package "git.git"`) || !strings.Contains(buf.String(), `Unpinned package "microsoft.visualstudiocode"`) {
 		t.Errorf("unexpected unpin output: %s", buf.String())
+	}
+}
+
+func TestFilterOutPinned_CorruptConfigFailsClosed(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	if err := os.WriteFile(tmpCfg, []byte("{ corrupt: json"), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	updates := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	_, _, err := filterOutPinned(updates)
+	if err == nil {
+		t.Fatalf("expected error from filterOutPinned on corrupt config, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to load configuration") {
+		t.Errorf("expected failed to load configuration error, got: %v", err)
+	}
+}
+
+func TestFilterOutPinned_NonExistentConfigSucceeds(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "nonexistent", "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	updates := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	filtered, skipped, err := filterOutPinned(updates)
+	if err != nil {
+		t.Fatalf("unexpected error when config does not exist: %v", err)
+	}
+	if len(filtered) != 1 || skipped != 0 {
+		t.Errorf("expected 1 filtered and 0 skipped, got filtered=%d, skipped=%d", len(filtered), skipped)
 	}
 }
