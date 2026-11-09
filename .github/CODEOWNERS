@@ -1,0 +1,21 @@
+# Global code ownership for Patchwork repository
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything across the repository
+* @karan-banwasi
+
+# GitHub Actions workflows and automation
+/.github/workflows/ @karan-banwasi
+/.github/dependabot.yml @karan-banwasi
+
+# Governance, security, and contribution standards
+/SECURITY.md @karan-banwasi
+/CONTRIBUTING.md @karan-banwasi
+/CODE_OF_CONDUCT.md @karan-banwasi
+/.github/CODEOWNERS @karan-banwasi
+/.github/ISSUE_TEMPLATE/ @karan-banwasi
+/.github/pull_request_template.md @karan-banwasi
+
+# Packaging and distribution scripts
+/install.ps1 @karan-banwasi
+/winget/ @karan-banwasi

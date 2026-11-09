@@ -38,7 +38,7 @@ func NewRootCmd() *cobra.Command {
 		Use:          "pw",
 		Version:      version,
 		Short:        "Patchwork is a CLI tool to manage package updates",
-		Long:         `Patchwork iterates through packages that have available updates and helps manage them across different package managers including Winget, Scoop, Chocolatey, and Homebrew.`,
+		Long:         `Patchwork iterates through packages that have available updates and helps manage them across 9 supported package managers: Homebrew, Winget, Scoop, Chocolatey, npm Global, .NET Global Tools, uv Python Tools, Rust Cargo Crates, and PowerShell PSResource. Automatically detects host platform and queries only relevant managers.`,
 		SilenceUsage: true,
 	}
 

@@ -31,3 +31,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Winget local generated manifests
+winget/manifests/

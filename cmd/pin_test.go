@@ -100,3 +100,36 @@ func TestFilterOutPinned_NonExistentConfigSucceeds(t *testing.T) {
 		t.Errorf("expected 1 filtered and 0 skipped, got filtered=%d, skipped=%d", len(filtered), skipped)
 	}
 }
+
+func TestPinnedCmd_JSON(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	// Pin items
+	buf := new(bytes.Buffer)
+	pinCmd := NewRootCmd()
+	pinCmd.SetOut(buf)
+	pinCmd.SetArgs([]string{"pin", "Git.Git", "scoop:curl"})
+	if err := pinCmd.Execute(); err != nil {
+		t.Fatalf("pin execute: %v", err)
+	}
+
+	buf.Reset()
+	pinnedCmd := NewRootCmd()
+	pinnedCmd.SetOut(buf)
+	pinnedCmd.SetArgs([]string{"pinned", "--json"})
+	if err := pinnedCmd.Execute(); err != nil {
+		t.Fatalf("pinned --json execute: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, `"schema_version": "1.0.0"`) {
+		t.Errorf("expected schema_version in json output, got: %s", out)
+	}
+	if !strings.Contains(out, `"count": 2`) {
+		t.Errorf("expected count 2 in json output, got: %s", out)
+	}
+	if !strings.Contains(out, `"manager": "scoop"`) {
+		t.Errorf("expected scoop manager in json output, got: %s", out)
+	}
+}

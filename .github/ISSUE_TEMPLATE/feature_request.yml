@@ -1,0 +1,82 @@
+name: Feature Request
+description: Propose a new feature, improvement, or package manager driver
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an enhancement to Patchwork! Please provide detailed context and envisioned CLI UX below.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A short, concise summary of the proposed feature or improvement.
+      placeholder: Briefly explain the feature you would like to see...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement / Motivation
+      description: Is your feature request related to a problem or limitation? Please describe.
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution & CLI UX
+      description: Describe your proposed solution, syntax, flags, or configuration changes.
+      placeholder: |
+        Proposed command syntax:
+        pw upgrade --exclude="package1,package2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+
+  - type: checkboxes
+    id: target_os
+    attributes:
+      label: Target Operating Systems
+      description: Which operating systems would this feature apply to?
+      options:
+        - label: Cross-Platform (Windows, macOS, Linux)
+        - label: Windows
+        - label: macOS
+        - label: Linux
+
+  - type: checkboxes
+    id: target_managers
+    attributes:
+      label: Relevant Package Managers
+      description: Which package managers or modules are impacted?
+      options:
+        - label: Core Engine / CLI Commands
+        - label: Winget (`winget`)
+        - label: Scoop (`scoop`)
+        - label: Chocolatey (`choco`)
+        - label: Homebrew (`brew`)
+        - label: npm Global (`npm`)
+        - label: Python uv (`uv`)
+        - label: Rust Cargo (`cargo`)
+        - label: .NET Global Tools (`dotnet`)
+        - label: PowerShell PSResource (`psresource`)
+        - label: New Package Manager (please specify in summary)
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a pull request implementing this feature.
+        - label: I have searched existing issues and feature requests to verify this is not already requested.
+          required: true

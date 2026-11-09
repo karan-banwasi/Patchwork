@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -114,7 +115,8 @@ func newUnpinCmd() *cobra.Command {
 }
 
 func newPinnedCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "pinned",
 		Short: "List all pinned (ignored) packages",
 		Long:  `Display all packages currently pinned in the Patchwork configuration.`,
@@ -123,6 +125,34 @@ func newPinnedCmd() *cobra.Command {
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
+			}
+			if jsonOutput {
+				type pinnedPkg struct {
+					Raw     string `json:"raw"`
+					ID      string `json:"id"`
+					Manager string `json:"manager,omitempty"`
+				}
+				type jsonPinnedOutput struct {
+					SchemaVersion string      `json:"schema_version"`
+					Count         int         `json:"count"`
+					Packages      []pinnedPkg `json:"pinned_packages"`
+				}
+				out := jsonPinnedOutput{
+					SchemaVersion: "1.0.0",
+					Count:         len(cfg.PinnedPackages),
+					Packages:      make([]pinnedPkg, 0, len(cfg.PinnedPackages)),
+				}
+				for _, p := range cfg.PinnedPackages {
+					item := pinnedPkg{Raw: p, ID: p}
+					if idx := strings.IndexByte(p, ':'); idx > 0 && idx < len(p)-1 {
+						item.Manager = p[:idx]
+						item.ID = p[idx+1:]
+					}
+					out.Packages = append(out.Packages, item)
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
 			}
 			if len(cfg.PinnedPackages) == 0 {
 				cmd.Println("No packages are currently pinned.")
@@ -139,4 +169,6 @@ func newPinnedCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output pinned packages in JSON format")
+	return cmd
 }
