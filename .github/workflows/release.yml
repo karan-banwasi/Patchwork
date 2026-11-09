@@ -240,7 +240,7 @@ jobs:
           gh release edit "$NEW_TAG" --draft=false
 
       - name: Publish to winget-pkgs
-        if: secrets.WINGET_TOKEN != '' && (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')
+        if: (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')
         continue-on-error: true
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -248,6 +248,10 @@ jobs:
           NEW_VERSION: ${{ steps.build_release.outputs.version }}
           NEW_TAG: ${{ steps.build_release.outputs.tag }}
         run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "WINGET_TOKEN is not configured; skipping automated publish to winget-pkgs."
+            exit 0
+          fi
           if [ -z "$NEW_VERSION" ]; then
             LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
             NEW_VERSION=${LATEST_TAG#v}
