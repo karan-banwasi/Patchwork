@@ -1,5 +1,10 @@
 # Install script for Patchwork (pw)
-$ErrorActionPreference = "Stop"
+[CmdletBinding()]
+param(
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"),
+    [string]$Repo = "karan-banwasi/Patchwork",
+    [switch]$FunctionsOnly
+)
 
 # Force TLS 1.2 / TLS 1.3 for GitHub compatibility on Windows PowerShell
 try {
@@ -8,10 +13,46 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 }
 
-$repo = "karan-banwasi/Patchwork"
-$installDir = Join-Path $env:LOCALAPPDATA "Programs\Patchwork\bin"
+function Get-ExpectedChecksum {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content,
+        [Parameter(Mandatory = $true)]
+        [string]$AssetName,
+        [Parameter(Mandatory = $true)]
+        [string]$WingetArch
+    )
+
+    # 1. Primary: SHA256SUMS format (<64-hex>  <filename>)
+    $shaSumsPattern = '(?m)^([A-Fa-f0-9]{64})\s+\*?(?:\.[\/\\])?' + [regex]::Escape($AssetName) + '\s*$'
+    $matchSha = [regex]::Match($Content, $shaSumsPattern)
+    if ($matchSha.Success) {
+        return $matchSha.Groups[1].Value.ToUpper()
+    }
+
+    # 2. Fallback: Winget installer YAML format (Architecture: <arch> ... InstallerSha256: <hash>)
+    $yamlPattern = "(?ms)Architecture:\s*" + [regex]::Escape($WingetArch) + "\b.*?InstallerSha256:\s*([A-Fa-f0-9]{64})"
+    $matchYaml = [regex]::Match($Content, $yamlPattern)
+    if ($matchYaml.Success) {
+        return $matchYaml.Groups[1].Value.ToUpper()
+    }
+
+    return $null
+}
+
+# If dot-sourced or called with -FunctionsOnly, return early after defining functions
+if ($FunctionsOnly -or $MyInvocation.InvocationName -eq '.') {
+    return
+}
+
+$ErrorActionPreference = "Stop"
+
+$repo = $Repo
+$installDir = $InstallDir
 $exePath = Join-Path $installDir "pw.exe"
-$manifestName = "KaranBanwasi.Patchwork.installer.yaml"
+$shaSumsName = "SHA256SUMS"
+$legacyManifestName = "KaranBanwasi.Patchwork.installer.yaml"
 
 # Detect System Architecture (amd64 vs arm64)
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "arm64" } else { "amd64" }
@@ -31,7 +72,7 @@ if (-not (Test-Path -Path $installDir)) {
 
 $tmpId = [guid]::NewGuid().ToString("N")
 $tmpExe = Join-Path $env:TEMP "pw-$tmpId.exe"
-$tmpManifest = Join-Path $env:TEMP "pw-$tmpId.installer.yaml"
+$tmpManifest = Join-Path $env:TEMP "pw-$tmpId.manifest"
 
 Write-Host "Installing Patchwork (pw) for $arch..." -ForegroundColor Cyan
 
@@ -42,16 +83,29 @@ $hasGh = [bool](Get-Command gh -ErrorAction SilentlyContinue)
 if ($hasGh) {
     try {
         Write-Host "Attempting download of latest release via GitHub CLI..." -ForegroundColor Cyan
-        & gh release download -R $repo -p $assetName -p $manifestName -D $env:TEMP --clobber
+        # Try downloading binary + SHA256SUMS first
+        & gh release download -R $repo -p $assetName -p $shaSumsName -D $env:TEMP --clobber 2>$null
         $ghAssetPath = Join-Path $env:TEMP $assetName
-        $ghManifestPath = Join-Path $env:TEMP $manifestName
-        if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $ghAssetPath) -and (Test-Path -Path $ghManifestPath)) {
+        $ghShaPath = Join-Path $env:TEMP $shaSumsName
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $ghAssetPath) -and (Test-Path -Path $ghShaPath)) {
             Move-Item -Path $ghAssetPath -Destination $tmpExe -Force
-            Move-Item -Path $ghManifestPath -Destination $tmpManifest -Force
+            Move-Item -Path $ghShaPath -Destination $tmpManifest -Force
             $downloaded = $true
+        } else {
+            # Fallback: try downloading binary + legacy Winget manifest
+            & gh release download -R $repo -p $assetName -p $legacyManifestName -D $env:TEMP --clobber 2>$null
+            $ghLegacyPath = Join-Path $env:TEMP $legacyManifestName
+            if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $ghAssetPath) -and (Test-Path -Path $ghLegacyPath)) {
+                Move-Item -Path $ghAssetPath -Destination $tmpExe -Force
+                Move-Item -Path $ghLegacyPath -Destination $tmpManifest -Force
+                $downloaded = $true
+            }
         }
     } catch {
         Write-Verbose "GitHub CLI download did not succeed ($($_.Exception.Message)); falling back to REST API."
+    } finally {
+        # Clean up any leftover un-moved assets in TEMP
+        Remove-Item -Path (Join-Path $env:TEMP $assetName), (Join-Path $env:TEMP $shaSumsName), (Join-Path $env:TEMP $legacyManifestName) -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -69,12 +123,16 @@ if (-not $downloaded) {
             throw "Release $($rel.tag_name) is a draft or prerelease."
         }
         $exeAsset = $rel.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-        $manAsset = $rel.assets | Where-Object { $_.name -eq $manifestName } | Select-Object -First 1
         if (-not $exeAsset) {
             throw "Release $($rel.tag_name) does not contain asset '$assetName'."
         }
+
+        $shaSumsAsset = $rel.assets | Where-Object { $_.name -eq $shaSumsName } | Select-Object -First 1
+        $legacyManAsset = $rel.assets | Where-Object { $_.name -eq $legacyManifestName } | Select-Object -First 1
+
+        $manAsset = if ($shaSumsAsset) { $shaSumsAsset } else { $legacyManAsset }
         if (-not $manAsset) {
-            throw "Release $($rel.tag_name) does not contain checksum manifest '$manifestName'."
+            throw "Release $($rel.tag_name) does not contain a checksum manifest ('$shaSumsName' or '$legacyManifestName')."
         }
 
         Write-Host "Downloading release $($rel.tag_name) from GitHub..." -ForegroundColor Cyan
@@ -101,18 +159,16 @@ if (-not $downloaded) {
     }
 }
 
-# Verify SHA-256 checksum against the release installer manifest before replacing any existing binary
+# Verify SHA-256 checksum against the release manifest before replacing any existing binary
 try {
-    $yamlContent = Get-Content -Path $tmpManifest -Raw
-    $pattern = "(?ms)Architecture:\s*$wingetArch\b.*?InstallerSha256:\s*([A-Fa-f0-9]{64})"
-    $match = [regex]::Match($yamlContent, $pattern)
-    if (-not $match.Success) {
-        throw "Could not find InstallerSha256 for architecture '$wingetArch' in $manifestName."
+    $manifestContent = Get-Content -Path $tmpManifest -Raw
+    $expectedHash = Get-ExpectedChecksum -Content $manifestContent -AssetName $assetName -WingetArch $wingetArch
+    if (-not $expectedHash) {
+        throw "Could not find expected SHA256 checksum for '$assetName' in manifest."
     }
-    $expectedHash = $match.Groups[1].Value.ToUpper()
     $actualHash = (Get-FileHash -Path $tmpExe -Algorithm SHA256).Hash.ToUpper()
 
-    if (-not $expectedHash -or $actualHash -ne $expectedHash) {
+    if ($actualHash -ne $expectedHash) {
         throw "SHA256 verification failed for $assetName (expected $expectedHash, got $actualHash)."
     }
     Write-Host "Verified SHA256 checksum ($($actualHash.Substring(0, 12))...)." -ForegroundColor Green

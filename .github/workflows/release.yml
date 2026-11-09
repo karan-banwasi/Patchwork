@@ -165,6 +165,15 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-linux-amd64 .
           GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-linux-arm64 .
           
+          # Generate universal SHA256SUMS manifest covering all 6 platform binaries
+          sha256sum \
+            pw.exe \
+            pw-arm64.exe \
+            pw-darwin-arm64 \
+            pw-darwin-amd64 \
+            pw-linux-amd64 \
+            pw-linux-arm64 > SHA256SUMS
+          
           # Compute SHA256 hashes and generate Winget manifest files for the release
           SHA_X64=$(sha256sum pw.exe | awk '{print toupper($1)}')
           SHA_ARM64=$(sha256sum pw-arm64.exe | awk '{print toupper($1)}')
@@ -198,6 +207,7 @@ jobs:
             pw.exe pw-arm64.exe \
             pw-darwin-arm64 pw-darwin-amd64 \
             pw-linux-amd64 pw-linux-arm64 \
+            SHA256SUMS \
             KaranBanwasi.Patchwork.yaml \
             KaranBanwasi.Patchwork.locale.en-US.yaml \
             KaranBanwasi.Patchwork.installer.yaml \
@@ -213,6 +223,7 @@ jobs:
             pw-darwin-amd64
             pw-linux-amd64
             pw-linux-arm64
+            SHA256SUMS
 
       - name: Publish to winget-pkgs
         if: env.WINGET_TOKEN != '' && (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')

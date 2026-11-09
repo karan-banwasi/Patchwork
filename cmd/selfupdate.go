@@ -125,10 +125,118 @@ func detectManagedInstall(exePath string) error {
 	return nil
 }
 
+// resolveBinaryAsset maps GOOS and GOARCH to the expected release binary asset name.
+func resolveBinaryAsset(goos, goarch string) (string, error) {
+	switch goos {
+	case "windows":
+		switch goarch {
+		case "amd64":
+			return "pw.exe", nil
+		case "arm64":
+			return "pw-arm64.exe", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for windows: %s", goarch)
+		}
+	case "darwin":
+		switch goarch {
+		case "arm64":
+			return "pw-darwin-arm64", nil
+		case "amd64":
+			return "pw-darwin-amd64", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for darwin: %s", goarch)
+		}
+	case "linux":
+		switch goarch {
+		case "amd64":
+			return "pw-linux-amd64", nil
+		case "arm64":
+			return "pw-linux-arm64", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for linux: %s", goarch)
+		}
+	default:
+		return "", fmt.Errorf("unsupported operating system: %s", goos)
+	}
+}
+
+// parseSHA256Sums parses standard SHA256SUMS content (lines of "<hash> [*]<filename>")
+// and returns a map of filename to uppercase hex SHA256.
+func parseSHA256Sums(content string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		hash := fields[0]
+		if len(hash) != 64 {
+			continue
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(hash):])
+		rest = strings.TrimPrefix(rest, "*")
+		rest = strings.TrimSpace(rest)
+		rest = strings.TrimPrefix(rest, "./")
+		rest = strings.TrimPrefix(rest, `.\`)
+		rest = strings.ReplaceAll(rest, `\`, "/")
+		var filename string
+		if idx := strings.LastIndex(rest, "/"); idx != -1 {
+			filename = rest[idx+1:]
+		} else {
+			filename = rest
+		}
+		if filename != "" {
+			result[filename] = strings.ToUpper(hash)
+		}
+	}
+	return result
+}
+
+// downloadAssetBytes downloads small metadata or manifest assets (limited to maxManifestSize).
+func downloadAssetBytes(ctx context.Context, client *http.Client, asset *ghAsset, token string) ([]byte, error) {
+	manCtx, manCancel := context.WithTimeout(ctx, metadataTimeout)
+	defer manCancel()
+
+	req, err := http.NewRequestWithContext(manCtx, http.MethodGet, asset.BrowserDownloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build asset request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Patchwork-CLI")
+	if token != "" && asset.URL != "" {
+		req.URL, _ = req.URL.Parse(asset.URL)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/octet-stream")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download asset: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("asset download returned status %d", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read asset: %w", err)
+	}
+	return bodyBytes, nil
+}
+
 // cleanupStaleUpdateFiles removes leftover temporary binaries from interrupted self-updates.
 func cleanupStaleUpdateFiles(exeDir, exePath string) {
 	_ = os.Remove(exePath + ".old")
-	matches, err := filepath.Glob(filepath.Join(exeDir, "pw-update-*.exe"))
+	matches, err := filepath.Glob(filepath.Join(exeDir, "pw-update-*"))
 	if err != nil {
 		return
 	}
@@ -192,7 +300,7 @@ func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL,
 	return nil
 }
 
-func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
+func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
 	if !opts.force {
 		if err := detectManagedInstall(exePath); err != nil {
 			return err
@@ -204,11 +312,9 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 
 	fmt.Fprintf(out, "Checking for Patchwork updates (current: %s)...\n", currentVersion)
 
-	assetName := "pw.exe"
-	wingetArch := "x64"
-	if goarch == "arm64" {
-		assetName = "pw-arm64.exe"
-		wingetArch = "arm64"
+	assetName, err := resolveBinaryAsset(goos, goarch)
+	if err != nil {
+		return err
 	}
 
 	token := os.Getenv("GH_TOKEN")
@@ -257,55 +363,72 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 	}
 
 	var targetAsset *ghAsset
-	var manifestAsset *ghAsset
+	var sha256SumsAsset *ghAsset
+	var wingetYamlAsset *ghAsset
+
 	for i := range rel.Assets {
-		if rel.Assets[i].Name == assetName {
+		switch rel.Assets[i].Name {
+		case assetName:
 			targetAsset = &rel.Assets[i]
-		}
-		if rel.Assets[i].Name == "KaranBanwasi.Patchwork.installer.yaml" {
-			manifestAsset = &rel.Assets[i]
+		case "SHA256SUMS":
+			sha256SumsAsset = &rel.Assets[i]
+		case "KaranBanwasi.Patchwork.installer.yaml":
+			wingetYamlAsset = &rel.Assets[i]
 		}
 	}
+
+	// Compatibility fallback for Windows asset names
+	if targetAsset == nil && goos == "windows" {
+		altName := ""
+		if goarch == "amd64" {
+			altName = "pw-windows-amd64.exe"
+		} else if goarch == "arm64" {
+			altName = "pw-windows-arm64.exe"
+		}
+		if altName != "" {
+			for i := range rel.Assets {
+				if rel.Assets[i].Name == altName {
+					targetAsset = &rel.Assets[i]
+					assetName = altName
+					break
+				}
+			}
+		}
+	}
+
 	if targetAsset == nil {
 		return fmt.Errorf("release %s does not contain asset %q", rel.TagName, assetName)
 	}
-	if manifestAsset == nil {
-		return fmt.Errorf("release %s has no checksum manifest; refusing to update", rel.TagName)
-	}
 
-	// Fetch installer manifest to verify SHA-256 checksum (fail closed)
-	manCtx, manCancel := context.WithTimeout(ctx, metadataTimeout)
-	defer manCancel()
-
-	reqMan, err := http.NewRequestWithContext(manCtx, http.MethodGet, manifestAsset.BrowserDownloadURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to build manifest request: %w", err)
-	}
-	reqMan.Header.Set("User-Agent", "Patchwork-CLI")
-	if token != "" && manifestAsset.URL != "" {
-		reqMan.URL, _ = reqMan.URL.Parse(manifestAsset.URL)
-		reqMan.Header.Set("Authorization", "Bearer "+token)
-		reqMan.Header.Set("Accept", "application/octet-stream")
-	}
-
-	respMan, err := client.Do(reqMan)
-	if err != nil {
-		return fmt.Errorf("failed to download checksum manifest: %w", err)
-	}
-	defer respMan.Body.Close()
-
-	if respMan.StatusCode != http.StatusOK {
-		return fmt.Errorf("checksum manifest download returned status %d", respMan.StatusCode)
-	}
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(respMan.Body, maxManifestSize))
-	if err != nil {
-		return fmt.Errorf("failed to read checksum manifest: %w", err)
-	}
-
-	expectedSHA := extractExpectedSHA256(string(bodyBytes), wingetArch)
-	if expectedSHA == "" {
-		return fmt.Errorf("could not determine expected SHA256 for %s; refusing to update", assetName)
+	var expectedSHA string
+	if sha256SumsAsset != nil {
+		bodyBytes, err := downloadAssetBytes(ctx, client, sha256SumsAsset, token)
+		if err != nil {
+			return fmt.Errorf("failed to download checksum manifest (SHA256SUMS): %w", err)
+		}
+		sums := parseSHA256Sums(string(bodyBytes))
+		expectedSHA = sums[assetName]
+		if expectedSHA == "" {
+			return fmt.Errorf("release %s SHA256SUMS does not contain checksum for %s; refusing to update", rel.TagName, assetName)
+		}
+	} else if goos == "windows" && wingetYamlAsset != nil {
+		bodyBytes, err := downloadAssetBytes(ctx, client, wingetYamlAsset, token)
+		if err != nil {
+			return fmt.Errorf("failed to download checksum manifest: %w", err)
+		}
+		wingetArch := "x64"
+		if goarch == "arm64" {
+			wingetArch = "arm64"
+		}
+		expectedSHA = extractExpectedSHA256(string(bodyBytes), wingetArch)
+		if expectedSHA == "" {
+			return fmt.Errorf("could not determine expected SHA256 for %s; refusing to update", assetName)
+		}
+	} else {
+		if goos == "windows" {
+			return fmt.Errorf("release %s has no checksum manifest (neither SHA256SUMS nor winget installer yaml); refusing to update", rel.TagName)
+		}
+		return fmt.Errorf("release %s has no SHA256SUMS checksum manifest; refusing to update", rel.TagName)
 	}
 
 	fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
@@ -335,7 +458,12 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		return fmt.Errorf("asset download returned status %d", respDL.StatusCode)
 	}
 
-	tmpFile, err := os.CreateTemp(exeDir, "pw-update-*.exe")
+	tempPattern := "pw-update-*"
+	if goos == "windows" {
+		tempPattern = "pw-update-*.exe"
+	}
+
+	tmpFile, err := os.CreateTemp(exeDir, tempPattern)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) || os.IsPermission(err) {
 			return fmt.Errorf("cannot write to %s: installed in a protected location; rerun elevated or use the package manager that installed it", exeDir)
@@ -421,6 +549,7 @@ func newSelfUpdateCmd() *cobra.Command {
 				http.DefaultClient,
 				defaultGitHubAPI,
 				version,
+				runtime.GOOS,
 				runtime.GOARCH,
 				exePath,
 				opts,
