@@ -7,7 +7,7 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
 - **Language**: Go 1.27.3 (Primary)
 - **Target OS**: Windows, macOS, Linux (Cross-Platform)
 - **CLI Framework**: Cobra (`github.com/spf13/cobra`)
-- **Interactive UI**: Built-in index- and range-based selector (`cmd/selector.go`)
+- **Interactive UI**: Built-in arrow-key/spacebar interactive TUI selector keyed by index (`cmd/selector.go`)
 - **Execution & Networking**: Decoupled `pm.Runner` command execution abstraction; resilient `internal/httputil` client with exponential backoff and offline gating
 
 ## Core Features
@@ -16,7 +16,7 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
    - **Windows**: Winget (`winget`), Scoop (`scoop`), Chocolatey (`choco`), and PowerShell PSResource (`psresource`).
    - **Cross-Platform**: npm Global (`npm`), .NET Global Tools (`dotnet`), uv Python Tools (`uv`), Rust Cargo Crates (`cargo`).
 2. **Platform Awareness**: The CLI automatically filters and detects package managers appropriate for the host OS via build tags and runtime availability probes.
-3. **Interactive Selection & Batching**: Provides a range/index selection prompt (e.g. `1, 3-5`, `all`). Supports detailed bulk upgrades for managers that support it (e.g. Chocolatey).
+3. **Interactive Selection & Batching**: Provides an interactive arrow-key/spacebar checkbox selector (`↑`/`↓`, `Space` to toggle, `→` all, `←` none, `Enter` to confirm) keyed internally by index. Supports detailed bulk upgrades for managers that support it (e.g. Chocolatey).
 4. **Command Pipeline**: Structured `plan` / `execute` pipeline (`internal/upgrade`) featuring dry-run simulation, deferral of self-updating shells/terminals, and pin enforcement.
 5. **Ecosystem-Aware Version Comparison**: Semver and epoch-aware comparison (`internal/version`) preventing false upgrades and downgrades.
 6. **Package Pinning**: Skip updates for selected packages globally or per-manager (`pw pin`, `pw unpin`, `pw pinned`), backed by atomic config writes.

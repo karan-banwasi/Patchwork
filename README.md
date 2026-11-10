@@ -3,7 +3,7 @@ A CLI tool to better manage package updates. Built natively in Go for Windows, m
 
 ## Features
 - **Check for Updates**: Fetch a perfectly aligned, tabular list of all available package updates across your system.
-- **Interactive Upgrades**: Select exactly which packages you want to upgrade using an intuitive index- and range-based selector directly in your terminal (e.g. `1, 3-5`, `all`, or press `Enter` to cancel).
+- **Interactive Upgrades**: Select which packages you want to upgrade using an interactive arrow-key and spacebar checkbox selector directly in your terminal (`↑`/`↓` to move, `Space` to select, `→` to select all, `←` to select none, `Enter` to confirm).
 - **Bulk & Targeted Upgrades**: Use `--all` to apply all pending updates at once, `--dry-run` to preview what will happen, or pass one or more Package IDs to upgrade specific apps.
 - **Multi-Package Manager Support**: Concurrently queries and manages updates across **Homebrew** (`brew`), **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **Rust Cargo Crates** (`cargo`), and **PowerShell Modules** (`psresource`). Automatically platform-aware to only query relevant package managers for your operating system.
 - **Package Pinning (Ignore List)**: Pin one or more packages (`pw pin <id>...`) so they are automatically skipped during `pw check` and `pw upgrade` (also respects native Chocolatey and Homebrew pins).

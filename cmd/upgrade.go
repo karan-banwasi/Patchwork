@@ -325,7 +325,7 @@ func newUpgradeCmd() *cobra.Command {
 						fmt.Fprintf(out, "\n--- %s (%d available update%s) ---\n", mgrName, len(pkgs), pluralSuffix)
 
 						selected, err := defaultMultiSelector.Select(
-							fmt.Sprintf("Select %s packages to upgrade (e.g. '1, 3-5', 'all', Enter to skip):", mgrName),
+							fmt.Sprintf("Select %s packages to upgrade:", mgrName),
 							pkgs,
 						)
 						if err != nil {
@@ -337,7 +337,7 @@ func newUpgradeCmd() *cobra.Command {
 				} else {
 					// Unified interactive selection
 					selected, err := defaultMultiSelector.Select(
-						"Select packages to upgrade (e.g. '1, 3-5', 'all', Enter to submit empty/cancel):",
+						"Select packages to upgrade:",
 						allowed,
 					)
 					if err != nil {
