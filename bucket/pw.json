@@ -1,0 +1,31 @@
+{
+    "version": "0.2.1",
+    "description": "Cross-platform CLI tool to check and manage package updates across multiple package managers",
+    "homepage": "https://github.com/karan-banwasi/Patchwork",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/karan-banwasi/Patchwork/releases/download/v0.2.1/pw.exe",
+            "hash": "8fad8b305d4bd6cc1220e087b63fdbd5ab7224ceae01c1d8324be529a7d1329a"
+        },
+        "arm64": {
+            "url": "https://github.com/karan-banwasi/Patchwork/releases/download/v0.2.1/pw-arm64.exe",
+            "hash": "9b9d04a32d85ae42dc65d30cb3f9e6f6d8393d4e21323898093bac016509b74a"
+        }
+    },
+    "bin": "pw.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/karan-banwasi/Patchwork/releases/download/v$version/pw.exe"
+            },
+            "arm64": {
+                "url": "https://github.com/karan-banwasi/Patchwork/releases/download/v$version/pw-arm64.exe"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS"
+        }
+    }
+}

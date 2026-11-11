@@ -43,14 +43,43 @@ irm https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.ps1 |
 This automatically detects your system architecture (`amd64` or `arm64`), downloads the latest release binary (`pw.exe` or `pw-arm64.exe`), verifies cryptographic build provenance and SHA-256 checksums, installs it to `%LOCALAPPDATA%\Programs\Patchwork\bin`, and adds it to your User `PATH`.
 
 #### Package Managers (Winget & Scoop)
-- **Winget**: `winget install KaranBanwasi.Patchwork`
-- **Scoop**: Support coming in Milestone 5 via official bucket tap.
+- **Winget**:
+  ```powershell
+  winget install KaranBanwasi.Patchwork
+  ```
+- **Scoop**:
+  ```powershell
+  scoop bucket add patchwork https://github.com/karan-banwasi/Patchwork
+  scoop install pw
+  ```
 
 ---
 
 ### macOS & Linux
 
-#### Quick Install (Pre-compiled Binary via curl)
+#### Quick Install (POSIX Shell)
+Install `pw` automatically on macOS or Linux with SHA-256 checksum verification and Sigstore build provenance attestation checks:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.sh | sh
+```
+
+Or using `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.sh | sh
+```
+
+#### Homebrew (macOS & Linux)
+Install `pw` directly via repository tap:
+
+```bash
+brew install karan-banwasi/patchwork/pw
+```
+
+Patchwork also natively queries and manages Homebrew formulae and casks out of the box (`pw check -m brew`, `pw upgrade -m brew`). When Patchwork is installed via Homebrew prefix, `pw self-update` recognizes the installation and prompts `brew upgrade pw`.
+
+#### Manual Download (Pre-compiled Binary via curl)
 Download the pre-compiled standalone binary for your platform and architecture directly to `/usr/local/bin` (or `~/.local/bin`):
 
 ```bash
@@ -66,9 +95,6 @@ sudo curl -fsSL https://github.com/karan-banwasi/Patchwork/releases/latest/downl
 # Linux (ARM64 / aarch64)
 sudo curl -fsSL https://github.com/karan-banwasi/Patchwork/releases/latest/download/pw-linux-arm64 -o /usr/local/bin/pw && sudo chmod +x /usr/local/bin/pw
 ```
-
-#### Homebrew (macOS & Linux)
-Patchwork natively queries and manages Homebrew formulae and casks out of the box (`pw check -m brew`, `pw upgrade -m brew`). When Patchwork is installed via Homebrew prefix, `pw self-update` recognizes the installation and prompts `brew upgrade patchwork`. An official Homebrew tap (`brew install karan-banwasi/tap/patchwork`) is being shipped in Milestone 5.
 
 ---
 
@@ -89,10 +115,10 @@ All release assets are accompanied by universal `SHA256SUMS` manifests and signe
 ---
 
 ### Building from Source (Go Developers)
-If you have Go installed (1.22+), you can install directly via `go install`:
+If you have Go installed (1.22+), you can install the `pw` CLI binary directly via `go install`:
 
 ```bash
-go install github.com/karan-banwasi/patchwork@latest
+go install github.com/karan-banwasi/patchwork/cmd/pw@latest
 ```
 
 Or clone the repository and build:

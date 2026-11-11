@@ -172,6 +172,28 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-linux-amd64 .
           GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-linux-arm64 .
           
+          # ---------------------------------------------------------------------------------
+          # Authenticode Code Signing Step (Azure Trusted Signing or SignPath OSS)
+          # Invariant: Signing MUST occur BEFORE computing SHA256SUMS and Winget manifests!
+          # See docs/code-signing.md for setup and configuration details.
+          # ---------------------------------------------------------------------------------
+          # - name: Authenticode Sign Windows Binaries
+          #   if: env.AZURE_CLIENT_ID != ''
+          #   uses: azure/trusted-signing-action@v0.4.0
+          #   with:
+          #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          #     azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          #     endpoint: https://eus.codesigning.azure.net/
+          #     trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          #     certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          #     files: |
+          #       pw.exe
+          #       pw-arm64.exe
+          #     file-digest: SHA256
+          #     timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          #     timestamp-digest: SHA256
+
           # Generate universal SHA256SUMS manifest covering all 6 platform binaries
           sha256sum \
             pw.exe \

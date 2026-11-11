@@ -33,7 +33,7 @@
 | 20 | Issue #42 [DOC-3] (P2) | Add ARCHITECTURE.md and "Adding a package manager" guide; refresh AGENTS.md | M4 | GitHub Issue #42 |
 | 21 | Issue #43 [DOC-4] (P2) | Reference docs for env vars, JSON schema, exit codes; generate CLI docs | M4 | GitHub Issue #43 |
 | 22 | Issue #44 [DOC-5] (P3) | Remove stale committed winget 0.0.22 manifests | M4 | GitHub Issue #44 |
-| 23 | Issue #45 [FEAT-1] (P1) | Distribution: `cmd/pw`, GoReleaser, Homebrew tap, Scoop bucket, install.sh, code signing | M5 | GitHub Issue #45 |
+| 23 | Issue #45 [FEAT-1] (P1) | Distribution: `cmd/pw`, GoReleaser, Homebrew tap, Scoop bucket, install.sh, code signing (DONE, gate-verified) | M5 | GitHub Issue #45 |
 | 24 | Issue #46 [FEAT-2] (P1) | Richer config: disabled managers, default flags, version-constrained pins with reason/expiry | M5 | GitHub Issue #46 |
 | 25 | Issue #47 [FEAT-3] (P2) | Add Linux-native and additional package managers | M5 | GitHub Issue #47 |
 | 26 | Issue #48 [FEAT-4] (P2) | Upgrade policies: --exclude, --level, --yes, cross-manager parallelism, changelog preview | M5 | GitHub Issue #48 |
@@ -50,7 +50,7 @@
 | M2 | Security & Release Pipeline Hardening | Issues #24, #25, #26, #28, #29, #30: Attestation verification, workflow secrets scoping, atomic config saves, install.ps1 error handling, CI hygiene | M1 | DONE |
 | M3 | Core Architecture & Engine Refactoring | Issues #27, #31, #32, #33, #34, #35, #36, #37, #38, #39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured error reporting, survey migration, exit codes | M1 | M3A (Issues #31, #32, #33, #34) DONE; M3B PLANNED |
 | M4 | Governance & Documentation Alignment | Issues #40, #41, #42, #43, #44: Cross-platform README, SECURITY.md, CONTRIBUTING.md, templates, ARCHITECTURE.md, purge stale manifests | none | PLANNED |
-| M5 | Distribution & Extended Features | Issues #45, #46, #47, #48, #49, #50, #51, #52: Rich config, advanced upgrade policies, notifications, history, additional managers | M2, M3 | PLANNED |
+| M5 | Distribution & Extended Features | Issues #45, #46, #47, #48, #49, #50, #51, #52: Rich config, advanced upgrade policies, notifications, history, additional managers | M2, M3 | IN PROGRESS (Issue #45 DONE; Issues #46-#52 pending) |
 | M6 | Final Verification, CI Validation & Release Prep | Verification across all platforms, remote GitHub Actions CI green, clean working tree, ready for release | M1-M5 | PLANNED |
 
 ## Interface Contracts

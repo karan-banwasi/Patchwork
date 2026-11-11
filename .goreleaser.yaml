@@ -1,0 +1,110 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: pw
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: pw
+    main: ./cmd/pw
+    binary: pw
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/karan-banwasi/patchwork/cmd.version={{ .Tag }}
+
+archives:
+  # 1. Standard compressed archives for package managers (Homebrew, Scoop, tarball users)
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "pw_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+
+  # 2. Standalone raw binaries matching cmd/selfupdate.go, install.ps1, and install.sh naming
+  - id: raw-binaries
+    format: binary
+    name_template: >-
+      {{- if and (eq .Os "windows") (eq .Arch "amd64") }}pw
+      {{- else if and (eq .Os "windows") (eq .Arch "arm64") }}pw-arm64
+      {{- else }}pw-{{ .Os }}-{{ .Arch }}
+      {{- end }}
+
+checksum:
+  name_template: 'SHA256SUMS'
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+brews:
+  - name: pw
+    repository:
+      owner: karan-banwasi
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/karan-banwasi/Patchwork"
+    description: "Cross-platform CLI tool to check and manage package updates across multiple package managers"
+    license: "MIT"
+    install: |
+      bin.install "pw"
+      generate_completions_from_executable(bin/"pw", "completion")
+    test: |
+      system "#{bin}/pw", "version"
+
+scoops:
+  - name: pw
+    repository:
+      owner: karan-banwasi
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    homepage: "https://github.com/karan-banwasi/Patchwork"
+    description: "Cross-platform CLI tool to check and manage package updates across multiple package managers"
+    license: "MIT"
+    bin: pw.exe
+    checkver: github
+    autoupdate:
+      architecture:
+        64bit:
+          url: "https://github.com/karan-banwasi/Patchwork/releases/download/{{ .Tag }}/pw.exe"
+        arm64:
+          url: "https://github.com/karan-banwasi/Patchwork/releases/download/{{ .Tag }}/pw-arm64.exe"
+      hash:
+        url: "$baseurl/SHA256SUMS"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - Merge pull request
+      - Merge branch
