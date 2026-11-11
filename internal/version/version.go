@@ -62,8 +62,10 @@ func Compare(ecosystem, v1, v2 string) int {
 	v2Clean := buildMetadataRegex.ReplaceAllString(v2, "")
 
 	switch eco {
-	case "uv", "python", "pypi":
+	case "uv", "python", "pypi", "pipx":
 		return comparePEP440(v1Clean, v2Clean)
+	case "apt", "deb", "debian", "dnf", "zypper", "rpm", "pacman", "arch":
+		return compareLinuxPkg(v1Clean, v2Clean)
 	case "brew", "homebrew":
 		return compareBrew(v1Clean, v2Clean)
 	default:
@@ -74,6 +76,43 @@ func Compare(ecosystem, v1, v2 string) int {
 // IsUpgrade reports whether available is strictly newer than current (current < available).
 func IsUpgrade(ecosystem, current, available string) bool {
 	return Compare(ecosystem, current, available) < 0
+}
+
+func compareLinuxPkg(v1, v2 string) int {
+	// Parse epochs
+	e1, v1Rest := extractEpoch(v1, brewEpochRegex)
+	e2, v2Rest := extractEpoch(v2, brewEpochRegex)
+	if e1 != e2 {
+		if e1 < e2 {
+			return -1
+		}
+		return 1
+	}
+
+	u1, r1 := splitPkgRelease(v1Rest)
+	u2, r2 := splitPkgRelease(v2Rest)
+
+	cmp := compareGeneric(u1, u2)
+	if cmp != 0 {
+		return cmp
+	}
+	if r1 == "" && r2 != "" {
+		return -1
+	}
+	if r1 != "" && r2 == "" {
+		return 1
+	}
+	if r1 != "" && r2 != "" {
+		return compareGeneric(r1, r2)
+	}
+	return 0
+}
+
+func splitPkgRelease(s string) (upstream, release string) {
+	if idx := strings.LastIndex(s, "-"); idx != -1 {
+		return s[:idx], s[idx+1:]
+	}
+	return s, ""
 }
 
 func compareBrew(v1, v2 string) int {

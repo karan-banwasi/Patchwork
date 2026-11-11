@@ -43,6 +43,14 @@ func TestCompareAndIsUpgrade(t *testing.T) {
 		{"pep440 epoch upgrade", "uv", "2.0.0", "1!1.0.0", -1, true},
 		{"pep440 epoch downgrade", "uv", "1!1.0.0", "2.0.0", 1, false},
 		{"pep440 same epoch upgrade", "python", "1!1.0.0", "1!1.1.0", -1, true},
+		{"pep440 pipx post upgrade", "pipx", "23.9.0", "23.9.1", -1, true},
+
+		// Linux / Epoch aware
+		{"apt epoch upgrade", "apt", "1:2.25.1", "1:2.25.2", -1, true},
+		{"apt higher epoch beats higher core", "apt", "1:3.0.0", "2:1.0.0", -1, true},
+		{"dnf version upgrade", "dnf", "7.82.0-15.fc38", "7.82.0-16.fc38", -1, true},
+		{"pacman arch upgrade", "pacman", "8.4.0-1", "8.5.0-1", -1, true},
+		{"zypper version upgrade", "zypper", "8.4.0-1.1", "8.5.0-1.1", -1, true},
 
 		// Homebrew
 		{"brew revision bump", "brew", "1.16.0", "1.16.0_1", -1, true},

@@ -1,0 +1,29 @@
+{
+  "pipx_spec_version": "0.1",
+  "venvs": {
+    "black": {
+      "metadata": {
+        "main_package": {
+          "package": "black",
+          "package_version": "23.9.1"
+        }
+      }
+    },
+    "bad$pkg": {
+      "metadata": {
+        "main_package": {
+          "package": "bad$pkg",
+          "package_version": "1.0.0"
+        }
+      }
+    },
+    "no_version": {
+      "metadata": {
+        "main_package": {
+          "package": "no_version",
+          "package_version": ""
+        }
+      }
+    }
+  }
+}

@@ -402,13 +402,13 @@ func TestConfig_GetSetValidation(t *testing.T) {
 	}
 
 	// Test disabled_managers
-	if err := cfg.Set("disabled_managers", "cargo,psresource"); err != nil {
+	if err := cfg.Set("disabled_managers", "cargo,psresource,apt,dnf,pacman,zypper,flatpak,snap,mas,pipx,gem,pnpm,bun,rustup,mise,asdf,vscode"); err != nil {
 		t.Fatalf("unexpected error setting disabled_managers: %v", err)
 	}
 	val, _ = cfg.Get("disabled_managers")
 	list, ok := val.([]string)
-	if !ok || len(list) != 2 || list[0] != "cargo" || list[1] != "psresource" {
-		t.Errorf("expected [cargo psresource], got %v", val)
+	if !ok || len(list) != 17 || list[0] != "cargo" || list[1] != "psresource" {
+		t.Errorf("expected 17 disabled managers, got %v", val)
 	}
 	if err := cfg.Set("disabled_managers", "unknown-manager"); err == nil {
 		t.Errorf("expected error setting unknown manager name")

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "bundler",
+    "id": "bundler",
+    "version": "2.4.20",
+    "available_version": "2.5.1",
+    "source": "rubygems",
+    "manager": "gem"
+  },
+  {
+    "name": "rails",
+    "id": "rails",
+    "version": "7.0.8",
+    "available_version": "7.1.2",
+    "source": "rubygems",
+    "manager": "gem"
+  },
+  {
+    "name": "rubocop",
+    "id": "rubocop",
+    "version": "1.56.0",
+    "available_version": "1.57.2",
+    "source": "rubygems",
+    "manager": "gem"
+  }
+]

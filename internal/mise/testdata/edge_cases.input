@@ -1,0 +1,22 @@
+[
+  {
+    "name": "node",
+    "current": "20.9.0",
+    "latest": "20.10.0"
+  },
+  {
+    "name": "invalid$mise",
+    "current": "1.0.0",
+    "latest": "2.0.0"
+  },
+  {
+    "name": "samever",
+    "current": "1.0.0",
+    "latest": "1.0.0"
+  },
+  {
+    "name": "downgrade",
+    "current": "2.0.0",
+    "latest": "1.0.0"
+  }
+]

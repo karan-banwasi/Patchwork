@@ -1,0 +1,4 @@
+Listing... Done
+curl/focal-updates,focal-security 7.68.0-1ubuntu2.24 amd64 [upgradable from: 7.68.0-1ubuntu2.22]
+git/focal-updates 1:2.25.1-1ubuntu3.13 amd64 [upgradable from: 1:2.25.1-1ubuntu3.11]
+libssl1.1/focal-updates 1.1.1f-1ubuntu2.24 amd64 [upgradable from: 1.1.1f-1ubuntu2.23]

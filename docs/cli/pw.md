@@ -4,7 +4,7 @@ Patchwork is a CLI tool to manage package updates
 
 ### Synopsis
 
-Patchwork iterates through packages that have available updates and helps manage them across 9 supported package managers: Homebrew, Winget, Scoop, Chocolatey, npm Global, .NET Global Tools, uv Python Tools, Rust Cargo Crates, and PowerShell PSResource. Automatically detects host platform and queries only relevant managers.
+Patchwork iterates through packages that have available updates and helps manage them across 24 supported package managers: Homebrew, Mac App Store (mas), Winget, Scoop, Chocolatey, PowerShell PSResource, APT, DNF, Pacman, Zypper, Flatpak, Snap, npm Global, pnpm Global, Bun Global, .NET Global Tools, uv Python Tools, pipx Python Apps, Rust Cargo Crates, Rustup Toolchains, RubyGems, mise, asdf, and VS Code Extensions. Automatically detects host platform and queries only relevant managers.
 
 ### Options
 

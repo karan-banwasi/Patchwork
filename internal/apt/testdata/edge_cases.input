@@ -1,0 +1,7 @@
+Listing... Done
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+curl/focal-updates 7.68.0-1ubuntu2.24 amd64 [upgradable from: 7.68.0-1ubuntu2.22]
+
+invalid-line-without-brackets
+samever/focal-updates 1.0.0 amd64 [upgradable from: 1.0.0]
+downgrade/focal-updates 1.0.0 amd64 [upgradable from: 1.1.0]

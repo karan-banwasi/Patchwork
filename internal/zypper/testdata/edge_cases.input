@@ -1,0 +1,7 @@
+v | Repository | Name | Current Version | Available Version | Arch
+v | openSUSE-Tumbleweed-Oss | curl | 8.4.0-1.1 | 8.5.0-1.1 | x86_64
+
+v | openSUSE-Tumbleweed-Oss | samever | 1.0.0 | 1.0.0 | x86_64
+v | openSUSE-Tumbleweed-Oss | downgrade | 2.0.0 | 1.0.0 | x86_64
+v | openSUSE-Tumbleweed-Oss | invalid$pkg | 1.0.0 | 1.1.0 | x86_64
+malformed_line_without_pipes

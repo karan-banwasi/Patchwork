@@ -4,7 +4,7 @@
 - **Language**: Go 1.27.3
 - **Entry Points**: `main.go` / `cmd/` (Cobra CLI tree)
 - **Core Domain**: `internal/pm` defining `Manager` interface, optional extension interfaces (`Locator`, `Cleaner`, `Deferrer`, `Refresher`, `BulkUpgrader`, `IOConfigurable`, `TimeoutProvider`), and `Runner` abstraction.
-- **Package Managers**: `internal/brew`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/npm`, `internal/dotnet`, `internal/uv`, `internal/cargo`, `internal/psresource`.
+- **Package Managers**: `internal/brew`, `internal/mas`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/psresource`, `internal/apt`, `internal/dnf`, `internal/pacman`, `internal/zypper`, `internal/flatpak`, `internal/snap`, `internal/npm`, `internal/pnpm`, `internal/bun`, `internal/dotnet`, `internal/uv`, `internal/pipx`, `internal/cargo`, `internal/rustup`, `internal/gem`, `internal/mise`, `internal/asdf`, `internal/vscode`.
 - **Configuration & Utilities**: `internal/config`, `cmd/selfupdate.go`.
 - **CI / Distribution**: `.github/workflows/release.yml`, `install.ps1`.
 
@@ -35,7 +35,7 @@
 | 22 | Issue #44 [DOC-5] (P3) | Remove stale committed winget 0.0.22 manifests | M4 | GitHub Issue #44 |
 | 23 | Issue #45 [FEAT-1] (P1) | Distribution: `cmd/pw`, GoReleaser, Homebrew tap, Scoop bucket, install.sh, code signing (DONE, gate-verified) | M5 | GitHub Issue #45 |
 | 24 | Issue #46 [FEAT-2] (P1) | Richer config: disabled managers, default flags, version-constrained pins with reason/expiry | M5 | GitHub Issue #46 |
-| 25 | Issue #47 [FEAT-3] (P2) | Add Linux-native and additional package managers | M5 | GitHub Issue #47 |
+| 25 | Issue #47 [FEAT-3] (P2) | Add Linux-native and additional package managers (DONE) | M5 | GitHub Issue #47 |
 | 26 | Issue #48 [FEAT-4] (P2) | Upgrade policies: --exclude, --level, --yes, cross-manager parallelism, changelog preview | M5 | GitHub Issue #48 |
 | 27 | Issue #49 [FEAT-5] (P2) | Scheduled background checks with desktop notifications | M5 | GitHub Issue #49 |
 | 28 | Issue #50 [FEAT-6] (P3) | Upgrade history and rollback | M5 | GitHub Issue #50 |

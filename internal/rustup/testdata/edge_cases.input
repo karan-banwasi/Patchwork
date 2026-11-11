@@ -1,0 +1,7 @@
+info: checking for self-updates
+stable-x86_64-pc-windows-msvc - Update available : 1.74.0 -> 1.74.1
+
+invalid$toolchain - Update available : 1.0.0 -> 2.0.0
+samever - Update available : 1.0.0 -> 1.0.0
+downgrade - Update available : 2.0.0 -> 1.0.0
+malformed line

@@ -11,10 +11,12 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
 - **Execution & Networking**: Decoupled `pm.Runner` command execution abstraction; resilient `internal/httputil` client with exponential backoff and offline gating
 
 ## Core Features
-1. **Multi-Manager Support**:
+1. **Multi-Manager Support (24 Managers)**:
    - **macOS / Linux**: Homebrew (`brew`) for formulae and casks.
+   - **macOS**: Mac App Store (`mas`).
+   - **Linux**: APT (`apt`), DNF (`dnf`), Pacman (`pacman`), Zypper (`zypper`), Flatpak (`flatpak`), Snap (`snap`).
    - **Windows**: Winget (`winget`), Scoop (`scoop`), Chocolatey (`choco`), and PowerShell PSResource (`psresource`).
-   - **Cross-Platform**: npm Global (`npm`), .NET Global Tools (`dotnet`), uv Python Tools (`uv`), Rust Cargo Crates (`cargo`).
+   - **Cross-Platform**: npm Global (`npm`), pnpm Global (`pnpm`), Bun Global (`bun`), .NET Global Tools (`dotnet`), uv Python Tools (`uv`), pipx Python Apps (`pipx`), Rust Cargo Crates (`cargo`), Rustup Toolchains (`rustup`), RubyGems (`gem`), mise (`mise`), asdf (`asdf`), VS Code Extensions (`vscode`).
 2. **Platform Awareness**: The CLI automatically filters and detects package managers appropriate for the host OS via build tags and runtime availability probes.
 3. **Interactive Selection & Batching**: Provides an interactive arrow-key/spacebar checkbox selector (`↑`/`↓`, `Space` to toggle, `→` all, `←` none, `Enter` to confirm) keyed internally by index. Supports detailed bulk upgrades for managers that support it (e.g. Chocolatey).
 4. **Command Pipeline**: Structured `plan` / `execute` pipeline (`internal/upgrade`) featuring dry-run simulation, deferral of self-updating shells/terminals, and pin enforcement.
@@ -25,7 +27,7 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
 ## Architecture & Code Layout
 - `main.go`: Entry point for the CLI tool. Points execution to the Cobra command tree.
 - `cmd/`: Houses Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`, `doctor.go`, `cleanup.go`, `pin.go`, `selfupdate.go`, etc.).
-  - `registry_windows.go` / `registry_unix.go`: Platform-gated registration of default package managers.
+  - `registry_common.go` / `registry_windows.go` / `registry_darwin.go` / `registry_linux.go` / `registry_other.go`: Platform-gated registration of default package managers.
 - `internal/`: Core business logic decoupled by subsystem and package manager:
   - `internal/pm/`: Core `pm.Manager` interface, extension interfaces, `Registry`, and `Runner` abstraction.
   - `internal/upgrade/`: Command pipeline (`Plan`, `Executor`, `Summary`, JSON serialization).
@@ -33,7 +35,7 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
   - `internal/config/`: Configuration and completion cache with atomic file I/O.
   - `internal/exitcodes/`: Standardized process exit codes (`ExitSuccess`, `ExitGeneralError`, `ExitUpgradeFailure`, `ExitCanceled`).
   - `internal/httputil/`: Resilient HTTP client with retry backoff and offline support.
-  - `internal/<manager>/`: Concrete drivers (`brew`, `winget`, `scoop`, `choco`, `psresource`, `npm`, `dotnet`, `uv`, `cargo`).
+  - `internal/<manager>/`: Concrete drivers (`brew`, `mas`, `winget`, `scoop`, `choco`, `psresource`, `apt`, `dnf`, `pacman`, `zypper`, `flatpak`, `snap`, `npm`, `pnpm`, `bun`, `dotnet`, `uv`, `pipx`, `cargo`, `rustup`, `gem`, `mise`, `asdf`, `vscode`).
 - `docs/`: Reference documentation (`env-vars.md`, `exit-codes.md`, `json-schema.md`) and CLI reference (`docs/cli/`).
 
 ## Development & Testing Guidelines

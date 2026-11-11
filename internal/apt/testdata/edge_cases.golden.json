@@ -1,0 +1,10 @@
+[
+  {
+    "name": "curl",
+    "id": "curl",
+    "version": "7.68.0-1ubuntu2.22",
+    "available_version": "7.68.0-1ubuntu2.24",
+    "source": "apt",
+    "manager": "apt"
+  }
+]

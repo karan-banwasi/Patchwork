@@ -1,0 +1,10 @@
+[
+  {
+    "name": "black",
+    "id": "black",
+    "version": "23.9.1",
+    "available_version": "",
+    "source": "pypi",
+    "manager": "pipx"
+  }
+]

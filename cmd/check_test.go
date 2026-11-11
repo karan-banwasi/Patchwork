@@ -29,8 +29,25 @@ func TestCheckCmd_UnknownManager(t *testing.T) {
 
 func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 	currentReg := getDefaultRegistry()
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust", "psresource", "powershell", "psresourceget"} {
+	crossPlatformAliases := []string{
+		"npm", "pnpm", "pnpm-global", "bun", "bun-global",
+		"dotnet", "dotnet-tool", "uv", "uv-tool", "pipx", "pipx-app",
+		"cargo", "rust", "rustup", "rust-toolchain", "gem", "rubygems", "ruby",
+		"mise", "rtx", "asdf", "vscode", "code", "vs-code",
+	}
+	for _, name := range crossPlatformAliases {
+		mgr, exists := currentReg.GetManager(name)
+		if !exists {
+			t.Errorf("expected cross-platform manager %q to be recognized", name)
+		}
+		if mgr == nil {
+			t.Errorf("expected non-nil manager for %q", name)
+		}
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		for _, name := range []string{"Winget", "WINGET", "scoop", "SCOOP", "choco", "CHOCO", "chocolatey", "Chocolatey", "psresource", "powershell", "psresourceget"} {
 			mgr, exists := currentReg.GetManager(name)
 			if !exists {
 				t.Errorf("expected windows manager %q to be recognized", name)
@@ -39,8 +56,36 @@ func TestCheckCmd_ValidManagerAliases(t *testing.T) {
 				t.Errorf("expected non-nil manager for %q", name)
 			}
 		}
-	} else {
-		for _, name := range []string{"brew", "BREW", "homebrew", "Homebrew", "npm", "dotnet", "dotnet-tool", "uv", "uv-tool", "cargo", "rust"} {
+	case "darwin":
+		for _, name := range []string{"brew", "BREW", "homebrew", "Homebrew", "mas", "macappstore", "appstore"} {
+			mgr, exists := currentReg.GetManager(name)
+			if !exists {
+				t.Errorf("expected darwin manager %q to be recognized", name)
+			}
+			if mgr == nil {
+				t.Errorf("expected non-nil manager for %q", name)
+			}
+		}
+	case "linux":
+		for _, name := range []string{
+			"brew", "BREW", "homebrew", "Homebrew",
+			"apt", "apt-get", "debian", "ubuntu",
+			"dnf", "yum", "fedora", "rhel",
+			"pacman", "arch",
+			"zypper", "opensuse", "suse",
+			"flatpak", "flathub",
+			"snap", "snapcraft", "snappy",
+		} {
+			mgr, exists := currentReg.GetManager(name)
+			if !exists {
+				t.Errorf("expected linux manager %q to be recognized", name)
+			}
+			if mgr == nil {
+				t.Errorf("expected non-nil manager for %q", name)
+			}
+		}
+	default:
+		for _, name := range []string{"brew", "BREW", "homebrew", "Homebrew"} {
 			mgr, exists := currentReg.GetManager(name)
 			if !exists {
 				t.Errorf("expected unix manager %q to be recognized", name)

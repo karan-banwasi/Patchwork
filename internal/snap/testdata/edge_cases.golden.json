@@ -1,0 +1,18 @@
+[
+  {
+    "name": "firefox",
+    "id": "firefox",
+    "version": "unknown",
+    "available_version": "120.0.1-1",
+    "source": "snapcraft",
+    "manager": "snap"
+  },
+  {
+    "name": "vlc",
+    "id": "vlc",
+    "version": "unknown",
+    "available_version": "3.0.20",
+    "source": "snapcraft",
+    "manager": "snap"
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Microsoft Remote Desktop",
+    "id": "1295203466",
+    "version": "10.9.4",
+    "available_version": "10.9.5",
+    "source": "mas",
+    "manager": "mas"
+  },
+  {
+    "name": "Slack",
+    "id": "803453959",
+    "version": "4.35.126",
+    "available_version": "4.36.136",
+    "source": "mas",
+    "manager": "mas"
+  },
+  {
+    "name": "Xcode",
+    "id": "497799835",
+    "version": "15.0",
+    "available_version": "15.1",
+    "source": "mas",
+    "manager": "mas"
+  }
+]

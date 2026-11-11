@@ -732,6 +732,7 @@ func (c *Config) Set(key string, val any) error {
 		}
 
 		knownManagers := map[string]bool{
+			// Existing
 			"brew": true, "homebrew": true,
 			"winget": true,
 			"scoop":  true,
@@ -741,6 +742,27 @@ func (c *Config) Set(key string, val any) error {
 			"dotnet": true,
 			"uv":     true, "python": true,
 			"cargo": true, "rust": true,
+
+			// Linux-native
+			"apt": true, "apt-get": true, "debian": true, "ubuntu": true,
+			"dnf": true, "yum": true, "fedora": true, "rhel": true,
+			"pacman": true, "arch": true,
+			"zypper": true, "opensuse": true, "suse": true,
+			"flatpak": true, "flathub": true,
+			"snap": true, "snapcraft": true, "snappy": true,
+
+			// macOS-native
+			"mas": true, "macappstore": true, "appstore": true,
+
+			// Cross-platform
+			"pipx": true, "pipx-app": true,
+			"gem": true, "rubygems": true, "ruby": true,
+			"pnpm": true, "pnpm-global": true,
+			"bun": true, "bun-global": true,
+			"rustup": true, "rust-toolchain": true,
+			"mise": true, "rtx": true,
+			"asdf":   true,
+			"vscode": true, "code": true, "vs-code": true,
 		}
 		var clean []string
 		for _, m := range list {

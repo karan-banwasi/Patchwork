@@ -1,0 +1,7 @@
+warning: duplicate database entry
+curl 8.4.0-1 -> 8.5.0-1
+
+error: failed to read pkg
+invalid$pkg 1.0 -> 2.0
+samever 2.0 -> 2.0
+downgrade 2.0 -> 1.0

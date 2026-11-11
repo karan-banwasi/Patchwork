@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Firefox",
+    "id": "org.mozilla.firefox",
+    "version": "unknown",
+    "available_version": "120.0.1",
+    "source": "flathub",
+    "manager": "flatpak"
+  },
+  {
+    "name": "Spotify",
+    "id": "com.spotify.Client",
+    "version": "unknown",
+    "available_version": "1.2.26.1187",
+    "source": "flathub",
+    "manager": "flatpak"
+  },
+  {
+    "name": "VLC",
+    "id": "org.videolan.VLC",
+    "version": "unknown",
+    "available_version": "3.0.20",
+    "source": "flathub",
+    "manager": "flatpak"
+  }
+]

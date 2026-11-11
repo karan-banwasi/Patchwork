@@ -1,0 +1,6 @@
+Security: fedora-updates 38 contains 2 security updates
+Obsoleting Packages
+curl.x86_64                            7.82.0-15.fc38                 updates
+
+broken_line_without_enough_columns
+invalid$pkg.x86_64                     1.0.0                          updates

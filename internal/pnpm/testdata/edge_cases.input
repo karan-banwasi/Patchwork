@@ -1,0 +1,22 @@
+{
+  "@scope/tool": {
+    "current": "1.0.0",
+    "latest": "1.1.0",
+    "wanted": "1.1.0"
+  },
+  "samever": {
+    "current": "2.0.0",
+    "latest": "2.0.0",
+    "wanted": "2.0.0"
+  },
+  "downgrade": {
+    "current": "2.0.0",
+    "latest": "1.0.0",
+    "wanted": "1.0.0"
+  },
+  "bad$pkg": {
+    "current": "1.0.0",
+    "latest": "2.0.0",
+    "wanted": "2.0.0"
+  }
+}

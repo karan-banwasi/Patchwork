@@ -1,0 +1,10 @@
+[
+  {
+    "name": "@scope/tool",
+    "id": "@scope/tool",
+    "version": "1.0.0",
+    "available_version": "1.1.0",
+    "source": "npm",
+    "manager": "pnpm"
+  }
+]

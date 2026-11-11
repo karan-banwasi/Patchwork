@@ -5,7 +5,7 @@ A CLI tool to better manage package updates. Built natively in Go for Windows, m
 - **Check for Updates**: Fetch a perfectly aligned, tabular list of all available package updates across your system.
 - **Interactive Upgrades**: Select which packages you want to upgrade using an interactive arrow-key and spacebar checkbox selector directly in your terminal (`↑`/`↓` to move, `Space` to select, `→` to select all, `←` to select none, `Enter` to confirm).
 - **Bulk & Targeted Upgrades**: Use `--all` to apply all pending updates at once, `--dry-run` to preview what will happen, or pass one or more Package IDs to upgrade specific apps.
-- **Multi-Package Manager Support**: Concurrently queries and manages updates across **Homebrew** (`brew`), **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **npm Global** (`npm -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **Rust Cargo Crates** (`cargo`), and **PowerShell Modules** (`psresource`). Automatically platform-aware to only query relevant package managers for your operating system.
+- **Multi-Package Manager Support**: Concurrently queries and manages updates across 24 supported package managers: **Homebrew** (`brew`), **Mac App Store** (`mas`), **Winget** (`winget`), **Scoop** (`scoop`), **Chocolatey** (`choco`), **PowerShell Modules** (`psresource`), **APT** (`apt`), **DNF** (`dnf`), **Pacman** (`pacman`), **Zypper** (`zypper`), **Flatpak** (`flatpak`), **Snap** (`snap`), **npm Global** (`npm -g`), **pnpm Global** (`pnpm -g`), **Bun Global** (`bun -g`), **.NET Global Tools** (`dotnet tool`), **uv Python Tools** (`uv tool`), **pipx Python Apps** (`pipx`), **Rust Cargo Crates** (`cargo`), **Rustup Toolchains** (`rustup`), **RubyGems** (`gem`), **mise** (`mise`), **asdf** (`asdf`), and **VS Code Extensions** (`vscode`). Automatically platform-aware to only query relevant package managers for your operating system.
 - **Package Pinning (Ignore List)**: Pin one or more packages (`pw pin <id>...`) so they are automatically skipped during `pw check` and `pw upgrade` (also respects native Chocolatey and Homebrew pins).
 - **Safe Terminal & Shell Self-Updating**: Automatically defers `Microsoft.PowerShell` and `Microsoft.WindowsTerminal` upgrades to the end of the queue and launches them in an isolated console window (`conhost.exe`) so closing your terminal mid-upgrade doesn't kill the installer or cause MSI error 1603.
 - **Auto-Elevation (UAC)**: Automatically prompts for Administrator privileges via Windows UAC when upgrading Chocolatey packages from a non-elevated shell.
@@ -20,14 +20,29 @@ Patchwork automatically detects which package managers are installed on your sys
 | Manager | Platform | `-m` / `--manager` Flag | Underlying Check Command | Underlying Upgrade Command |
 | :--- | :--- | :--- | :--- | :--- |
 | **Homebrew** | macOS / Linux | `brew` (or `homebrew`) | `brew outdated --json=v2` | `brew upgrade <id>` |
+| **Mac App Store** | macOS | `mas` (or `macappstore`, `appstore`) | `mas outdated` | `mas upgrade <id...>` |
 | **Winget** | Windows | `winget` | `winget upgrade` | `winget upgrade --id <id> --exact` |
 | **Scoop** | Windows | `scoop` | `scoop update` + `scoop status` | `scoop update <id>` |
 | **Chocolatey** | Windows | `choco` (or `chocolatey`) | `choco outdated --limit-output` | `choco upgrade <id> -y --no-progress` |
+| **PowerShell Modules** | Windows | `psresource` (or `powershell`) | `Get-InstalledPSResource` + `Find-PSResource` | `Update-PSResource -Name <id>` |
+| **APT** | Linux | `apt` (or `apt-get`, `debian`, `ubuntu`) | `apt list --upgradable` | `apt-get install --only-upgrade -y <id...>` |
+| **DNF** | Linux | `dnf` (or `yum`, `fedora`, `rhel`) | `dnf check-update --quiet` | `dnf upgrade -y <id...>` |
+| **Pacman** | Linux | `pacman` (or `arch`) | `checkupdates` / `pacman -Qu` | `pacman -S --noconfirm <id...>` |
+| **Zypper** | Linux | `zypper` (or `opensuse`, `suse`) | `zypper --terse list-updates` | `zypper --non-interactive update <id...>` |
+| **Flatpak** | Linux | `flatpak` (or `flathub`) | `flatpak remote-ls --updates` | `flatpak update -y <id...>` |
+| **Snap** | Linux | `snap` (or `snapcraft`, `snappy`) | `snap refresh --list` | `snap refresh <id...>` |
 | **npm (Global)** | Cross-Platform | `npm` | `npm outdated -g --json` | `npm install -g <id>@latest` |
+| **pnpm (Global)** | Cross-Platform | `pnpm` (or `pnpm-global`) | `pnpm outdated -g --format json` | `pnpm update -g <id...>` |
+| **Bun (Global)** | Cross-Platform | `bun` (or `bun-global`) | `bun pm ls -g` + concurrent npm check | `bun add -g <id...@latest>` |
 | **.NET Tools (Global)** | Cross-Platform | `dotnet` (or `dotnet-tool`) | `dotnet tool list -g` + concurrent NuGet search | `dotnet tool update -g <id>` |
 | **uv Python Tools** | Cross-Platform | `uv` (or `uv-tool`) | `uv tool list` + concurrent PyPI check | `uv tool upgrade <id>` |
+| **pipx Python Apps** | Cross-Platform | `pipx` (or `pipx-app`) | `pipx list --json` + concurrent PyPI check | `pipx upgrade <id>` |
 | **Rust Cargo Crates** | Cross-Platform | `cargo` (or `rust`) | `cargo install --list` + concurrent crates.io check | `cargo install <id>` |
-| **PowerShell Modules** | Windows | `psresource` (or `powershell`) | `Get-InstalledPSResource` + `Find-PSResource` | `Update-PSResource -Name <id>` |
+| **Rustup Toolchains** | Cross-Platform | `rustup` (or `rust-toolchain`) | `rustup check` | `rustup update <id...>` |
+| **RubyGems** | Cross-Platform | `gem` (or `rubygems`, `ruby`) | `gem outdated` | `gem update <id...>` |
+| **mise** | Cross-Platform | `mise` (or `rtx`) | `mise outdated --json` | `mise upgrade <id...>` |
+| **asdf** | Cross-Platform | `asdf` | `asdf current` + `asdf latest` | `asdf install <id> latest && asdf set <id> latest` |
+| **VS Code Extensions** | Cross-Platform | `vscode` (or `code`, `vs-code`) | `code --list-extensions --show-versions` + Marketplace check | `code --install-extension <id> --force` |
 
 ## Installation
 

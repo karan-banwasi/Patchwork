@@ -17,6 +17,19 @@ var (
 	dotnetIDRe     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-]{0,255}$`)
 	psresourceIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-]{0,255}$`)
 	brewIDRe       = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_\-.+]*/)*[A-Za-z0-9][A-Za-z0-9_\-.@+]{0,255}$`)
+	aptIDRe        = regexp.MustCompile(`^[a-z0-9][a-z0-9+\-.]{0,127}(:[a-z0-9]+)?$`)
+	dnfIDRe        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-+]{0,127}$`)
+	pacmanIDRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9@._+\-]{0,127}$`)
+	zypperIDRe     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\-+]{0,127}$`)
+	flatpakIDRe    = regexp.MustCompile(`^[a-zA-Z0-9_\-]+(\.[a-zA-Z0-9_\-]+)+$`)
+	snapIDRe       = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{0,62}[a-z0-9]?$`)
+	masIDRe        = regexp.MustCompile(`^[0-9]{1,16}$`)
+	pipxIDRe       = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._\-]{0,253}[A-Za-z0-9])?$`)
+	gemIDRe        = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$`)
+	rustupIDRe     = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-+]{0,127}$`)
+	miseIDRe       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]{0,127}$`)
+	asdfIDRe       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$`)
+	vscodeIDRe     = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-_]{0,127}\.[a-zA-Z0-9][a-zA-Z0-9.\-_]{0,127}$`)
 )
 
 func checkCommonID(id string) error {
@@ -99,6 +112,71 @@ func ValidateBrewID(id string) error {
 // ValidatePSResourceID validates a PowerShell PSResource module identifier.
 func ValidatePSResourceID(id string) error {
 	return validateWithPattern(id, psresourceIDRe)
+}
+
+// ValidateAptID validates an APT / Debian package identifier.
+func ValidateAptID(id string) error {
+	return validateWithPattern(id, aptIDRe)
+}
+
+// ValidateDnfID validates a DNF / RPM package identifier.
+func ValidateDnfID(id string) error {
+	return validateWithPattern(id, dnfIDRe)
+}
+
+// ValidatePacmanID validates an Arch Linux pacman package identifier.
+func ValidatePacmanID(id string) error {
+	return validateWithPattern(id, pacmanIDRe)
+}
+
+// ValidateZypperID validates an openSUSE zypper package identifier.
+func ValidateZypperID(id string) error {
+	return validateWithPattern(id, zypperIDRe)
+}
+
+// ValidateFlatpakID validates a Flatpak application identifier (e.g. org.mozilla.firefox).
+func ValidateFlatpakID(id string) error {
+	return validateWithPattern(id, flatpakIDRe)
+}
+
+// ValidateSnapID validates an Ubuntu Snap package identifier.
+func ValidateSnapID(id string) error {
+	return validateWithPattern(id, snapIDRe)
+}
+
+// ValidateMasID validates a Mac App Store application numeric ID.
+func ValidateMasID(id string) error {
+	return validateWithPattern(id, masIDRe)
+}
+
+// ValidatePipxID validates a pipx Python application package identifier.
+func ValidatePipxID(id string) error {
+	return validateWithPattern(id, pipxIDRe)
+}
+
+// ValidateGemID validates a Ruby gem package identifier.
+func ValidateGemID(id string) error {
+	return validateWithPattern(id, gemIDRe)
+}
+
+// ValidateRustupID validates a Rustup toolchain identifier.
+func ValidateRustupID(id string) error {
+	return validateWithPattern(id, rustupIDRe)
+}
+
+// ValidateMiseID validates a mise tool identifier.
+func ValidateMiseID(id string) error {
+	return validateWithPattern(id, miseIDRe)
+}
+
+// ValidateAsdfID validates an asdf plugin/tool identifier.
+func ValidateAsdfID(id string) error {
+	return validateWithPattern(id, asdfIDRe)
+}
+
+// ValidateVSCodeID validates a VS Code extension identifier (publisher.extension).
+func ValidateVSCodeID(id string) error {
+	return validateWithPattern(id, vscodeIDRe)
 }
 
 // EscapeWindowsArg escapes a command-line argument using Windows CommandLineToArgvW rules
