@@ -37,9 +37,16 @@ func newCleanupCmd() *cobra.Command {
 				if !exists {
 					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(reg.ManagerNames(), ", "))
 				}
+				if reg.IsDisabled(mgr.Name()) {
+					return fmt.Errorf("package manager %q is disabled in configuration", opts.manager)
+				}
 				managers = []pm.Manager{mgr}
 			} else {
-				managers = reg.All()
+				for _, m := range reg.All() {
+					if !reg.IsDisabled(m.Name()) {
+						managers = append(managers, m)
+					}
+				}
 			}
 
 			ranAny := false

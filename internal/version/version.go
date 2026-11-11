@@ -1,6 +1,7 @@
 package version
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -287,4 +288,148 @@ func compareGeneric(v1, v2 string) int {
 	}
 
 	return 0
+}
+
+// EvaluateConstraint evaluates whether versionStr satisfies the given constraint string
+// in the context of the package ecosystem.
+//
+// Supported operators and formats:
+//   - Empty constraint: returns false, nil (unconditional pin blocks all upgrades)
+//   - Exact: "22.1.0", "=22.1.0", "==22.1.0"
+//   - Relational: "<23", "<=22.5.0", ">1.0.0", ">=1.0.0", "!=2.0.0"
+//   - Tilde: "~1.2.3" (patch-level updates allowed; >=1.2.3 and <1.3.0)
+//   - Caret: "^1.2.3" (minor/patch updates allowed; >=1.2.3 and <2.0.0)
+//   - Compound: comma-separated list of constraints, e.g. ">=20.0, <23.0"
+//
+// Return value:
+//   - true: versionStr satisfies constraint (target is allowed / compatible)
+//   - false: versionStr violates constraint (target is blocked / pinned)
+func EvaluateConstraint(ecosystem, versionStr, constraint string) (bool, error) {
+	constraint = strings.TrimSpace(constraint)
+	if constraint == "" {
+		return false, nil
+	}
+	versionStr = strings.TrimSpace(versionStr)
+	if versionStr == "" {
+		return false, nil
+	}
+
+	clauses := strings.Split(constraint, ",")
+	for _, rawClause := range clauses {
+		clause := strings.TrimSpace(rawClause)
+		if clause == "" {
+			continue
+		}
+
+		var op, ref string
+		switch {
+		case strings.HasPrefix(clause, "<="):
+			op = "<="
+			ref = clause[2:]
+		case strings.HasPrefix(clause, ">="):
+			op = ">="
+			ref = clause[2:]
+		case strings.HasPrefix(clause, "=="):
+			op = "=="
+			ref = clause[2:]
+		case strings.HasPrefix(clause, "!="):
+			op = "!="
+			ref = clause[2:]
+		case strings.HasPrefix(clause, "~="):
+			op = "~="
+			ref = clause[2:]
+		case strings.HasPrefix(clause, "<"):
+			op = "<"
+			ref = clause[1:]
+		case strings.HasPrefix(clause, ">"):
+			op = ">"
+			ref = clause[1:]
+		case strings.HasPrefix(clause, "="):
+			op = "="
+			ref = clause[1:]
+		case strings.HasPrefix(clause, "~"):
+			op = "~"
+			ref = clause[1:]
+		case strings.HasPrefix(clause, "^"):
+			op = "^"
+			ref = clause[1:]
+		default:
+			op = "="
+			ref = clause
+		}
+
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return false, fmt.Errorf("invalid constraint %q: missing version operand", clause)
+		}
+
+		switch op {
+		case "<":
+			if Compare(ecosystem, versionStr, ref) >= 0 {
+				return false, nil
+			}
+		case "<=":
+			if Compare(ecosystem, versionStr, ref) > 0 {
+				return false, nil
+			}
+		case ">":
+			if Compare(ecosystem, versionStr, ref) <= 0 {
+				return false, nil
+			}
+		case ">=":
+			if Compare(ecosystem, versionStr, ref) < 0 {
+				return false, nil
+			}
+		case "=", "==":
+			if Compare(ecosystem, versionStr, ref) != 0 {
+				return false, nil
+			}
+		case "!=":
+			if Compare(ecosystem, versionStr, ref) == 0 {
+				return false, nil
+			}
+		case "~", "~=":
+			// Lower bound: >= ref
+			if Compare(ecosystem, versionStr, ref) < 0 {
+				return false, nil
+			}
+			// Upper bound: next minor
+			pv := parseVersion(ref)
+			var upperBound string
+			if len(pv.segments) >= 2 {
+				upperBound = fmt.Sprintf("%d.%d.0", pv.segments[0], pv.segments[1]+1)
+			} else if len(pv.segments) == 1 {
+				upperBound = fmt.Sprintf("%d.0.0", pv.segments[0]+1)
+			} else {
+				upperBound = ref
+			}
+			if Compare(ecosystem, versionStr, upperBound) >= 0 {
+				return false, nil
+			}
+		case "^":
+			// Lower bound: >= ref
+			if Compare(ecosystem, versionStr, ref) < 0 {
+				return false, nil
+			}
+			// Upper bound: next major (or next minor if major is 0, etc.)
+			pv := parseVersion(ref)
+			var upperBound string
+			if len(pv.segments) == 0 {
+				upperBound = ref
+			} else if pv.segments[0] > 0 {
+				upperBound = fmt.Sprintf("%d.0.0", pv.segments[0]+1)
+			} else if len(pv.segments) > 1 && pv.segments[1] > 0 {
+				upperBound = fmt.Sprintf("0.%d.0", pv.segments[1]+1)
+			} else if len(pv.segments) > 2 {
+				upperBound = fmt.Sprintf("0.0.%d", pv.segments[2]+1)
+			} else {
+				upperBound = "1.0.0"
+			}
+			if Compare(ecosystem, versionStr, upperBound) >= 0 {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
 }

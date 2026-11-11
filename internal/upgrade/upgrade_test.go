@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
@@ -138,6 +140,62 @@ func TestFilterPins(t *testing.T) {
 	_, _, err = FilterPins(pkgs, false)
 	if err == nil || !strings.Contains(err.Error(), "cannot verify pinned packages") {
 		t.Errorf("expected corrupt config error, got: %v", err)
+	}
+}
+
+func TestFilterPins_RicherPins(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgFile := filepath.Join(tmpDir, "config.json")
+	t.Setenv("PATCHWORK_CONFIG", cfgFile)
+
+	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	future := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+
+	cfgContent := fmt.Sprintf(`{
+		"pins": [
+			{"id": "node", "version": "<23", "reason": "breaks db driver"},
+			{"id": "legacy", "expires_at": %q},
+			{"id": "active-temp", "expires_at": %q}
+		]
+	}`, past, future)
+
+	if err := os.WriteFile(cfgFile, []byte(cfgContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	pkgs := []pm.PackageUpdate{
+		// node with available version satisfying <23 (allowed)
+		{Id: "node", AvailableVersion: "22.5.0", ManagerName: "npm"},
+		// node with available version violating <23 (skipped with reason)
+		{Id: "node", AvailableVersion: "23.1.0", ManagerName: "npm"},
+		// legacy with expired pin (allowed)
+		{Id: "legacy", AvailableVersion: "2.0.0", ManagerName: "brew"},
+		// active-temp with future expiry (skipped)
+		{Id: "active-temp", AvailableVersion: "2.0.0", ManagerName: "scoop"},
+	}
+
+	allowed, skipped, err := FilterPins([]pm.PackageUpdate{pkgs[0]}, false)
+	if err != nil || len(allowed) != 1 || len(skipped) != 0 {
+		t.Errorf("expected node 22.5.0 to be allowed, got allowed=%d, skipped=%d, err=%v", len(allowed), len(skipped), err)
+	}
+
+	allowed, skipped, err = FilterPins([]pm.PackageUpdate{pkgs[1]}, false)
+	if err != nil || len(allowed) != 0 || len(skipped) != 1 {
+		t.Errorf("expected node 23.1.0 to be skipped, got allowed=%d, skipped=%d, err=%v", len(allowed), len(skipped), err)
+	}
+	expectedStatus := "Skipped (pinned: <23 - breaks db driver)"
+	if len(skipped) > 0 && string(skipped[0].Status) != expectedStatus {
+		t.Errorf("expected status %q, got %q", expectedStatus, skipped[0].Status)
+	}
+
+	allowed, skipped, err = FilterPins([]pm.PackageUpdate{pkgs[2]}, false)
+	if err != nil || len(allowed) != 1 || len(skipped) != 0 {
+		t.Errorf("expected expired pin 'legacy' to be allowed, got allowed=%d, skipped=%d, err=%v", len(allowed), len(skipped), err)
+	}
+
+	allowed, skipped, err = FilterPins([]pm.PackageUpdate{pkgs[3]}, false)
+	if err != nil || len(allowed) != 0 || len(skipped) != 1 {
+		t.Errorf("expected active-temp to be skipped, got allowed=%d, skipped=%d, err=%v", len(allowed), len(skipped), err)
 	}
 }
 

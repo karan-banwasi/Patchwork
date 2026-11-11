@@ -17,6 +17,7 @@ Patchwork iterates through packages that have available updates and helps manage
 * [pw check](pw_check.md)	 - Check for available updates
 * [pw cleanup](pw_cleanup.md)	 - Clean up old package versions and download caches
 * [pw completion](pw_completion.md)	 - Generate shell completion script
+* [pw config](pw_config.md)	 - Manage Patchwork configuration
 * [pw doctor](pw_doctor.md)	 - Show system diagnostics and detected package managers
 * [pw pin](pw_pin.md)	 - Pin one or more packages to ignore them during check and upgrade
 * [pw pinned](pw_pinned.md)	 - List all pinned (ignored) packages

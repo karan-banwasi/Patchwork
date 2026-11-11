@@ -107,9 +107,25 @@ func newUpgradeCmd() *cobra.Command {
 			errOut := cmd.ErrOrStderr()
 			registry := getDefaultRegistry()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
-			if !cmd.Flags().Changed("accept-agreements") {
-				if cfg, err := config.Load(); err == nil && cfg != nil && cfg.AcceptAgreements != nil {
-					opts.acceptAgreements = *cfg.AcceptAgreements
+			cfg, _ := config.Load()
+			if cfg != nil {
+				if !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
+					if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
+						opts.timeout = d
+					}
+				}
+				if !cmd.Flags().Changed("accept-agreements") {
+					if cfg.Defaults.AcceptAgreements != nil {
+						opts.acceptAgreements = *cfg.Defaults.AcceptAgreements
+					} else if cfg.AcceptAgreements != nil {
+						opts.acceptAgreements = *cfg.AcceptAgreements
+					}
+				}
+				if !cmd.Flags().Changed("trust-repository") && cfg.Defaults.TrustRepository != nil {
+					opts.trustRepository = *cfg.Defaults.TrustRepository
+				}
+				if !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
+					opts.noRefresh = *cfg.Defaults.NoRefresh
 				}
 			}
 			registry.ConfigureOptions(pm.UpgradeOptions{

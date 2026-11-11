@@ -3,7 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -17,13 +19,14 @@ func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int, error
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load configuration: %w", err)
 	}
-	if len(cfg.PinnedPackages) == 0 {
+	if len(cfg.PinnedPackages) == 0 && len(cfg.Pins) == 0 {
 		return updates, 0, nil
 	}
 	var filtered []pm.PackageUpdate
 	var skipped int
 	for _, u := range updates {
-		if cfg.IsPinnedForManager(u.ManagerName, u.Id, u.Name) {
+		_, violated := cfg.MatchPin(u.ManagerName, u.Id, u.Name, u.AvailableVersion)
+		if violated {
 			skipped++
 			continue
 		}
@@ -32,8 +35,38 @@ func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int, error
 	return filtered, skipped, nil
 }
 
+func parseExpiry(s string) (*time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return &t, nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
+		return &t, nil
+	}
+	if strings.HasSuffix(s, "d") || strings.HasSuffix(s, "D") {
+		daysStr := s[:len(s)-1]
+		if days, err := strconv.Atoi(daysStr); err == nil {
+			t := time.Now().AddDate(0, 0, days).UTC()
+			return &t, nil
+		}
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		t := time.Now().Add(d).UTC()
+		return &t, nil
+	}
+	return nil, fmt.Errorf("invalid expiry format %q (expected RFC3339, YYYY-MM-DD, or duration like 30d, 24h)", s)
+}
+
 func newPinCmd() *cobra.Command {
-	return &cobra.Command{
+	var versionFlag string
+	var reasonFlag string
+	var expiresFlag string
+
+	cmd := &cobra.Command{
 		Use:               "pin <package-id> [package-id...]",
 		Short:             "Pin one or more packages to ignore them during check and upgrade",
 		Long:              `Add one or more package IDs (or manager-scoped entries like winget:Git.Git) to the Patchwork ignore list so they are skipped during 'pw check' and 'pw upgrade'.`,
@@ -44,14 +77,41 @@ func newPinCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
+			exp, err := parseExpiry(expiresFlag)
+			if err != nil {
+				return err
+			}
+
 			anyChanged := false
 			for _, id := range args {
-				if !cfg.Pin(id) {
-					cmd.Printf("Package %q is already pinned.\n", id)
-					continue
+				entry := config.PinEntry{
+					ID:        id,
+					Version:   versionFlag,
+					Reason:    reasonFlag,
+					ExpiresAt: exp,
 				}
-				anyChanged = true
-				cmd.Printf("Pinned package %q (will be skipped during check and upgrade).\n", id)
+				if versionFlag == "" && reasonFlag == "" && exp == nil {
+					if !cfg.Pin(id) {
+						cmd.Printf("Package %q is already pinned.\n", id)
+						continue
+					}
+					anyChanged = true
+					cmd.Printf("Pinned package %q (will be skipped during check and upgrade).\n", id)
+				} else {
+					cfg.AddPinEntry(entry)
+					anyChanged = true
+					var details []string
+					if versionFlag != "" {
+						details = append(details, fmt.Sprintf("version: %s", versionFlag))
+					}
+					if reasonFlag != "" {
+						details = append(details, fmt.Sprintf("reason: %s", reasonFlag))
+					}
+					if exp != nil {
+						details = append(details, fmt.Sprintf("expires: %s", exp.Format("2006-01-02")))
+					}
+					cmd.Printf("Pinned package %q (%s).\n", id, strings.Join(details, ", "))
+				}
 			}
 			if anyChanged {
 				if err := cfg.Save(); err != nil {
@@ -61,6 +121,12 @@ func newPinCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&versionFlag, "version", "", "Version constraint for pin (e.g. '<23', '~22.0.0')")
+	cmd.Flags().StringVar(&reasonFlag, "reason", "", "Reason for pinning this package")
+	cmd.Flags().StringVar(&expiresFlag, "expires", "", "Expiration date or duration for pin (e.g. '2026-12-31', '30d')")
+
+	return cmd
 }
 
 func newUnpinCmd() *cobra.Command {
@@ -128,9 +194,13 @@ func newPinnedCmd() *cobra.Command {
 			}
 			if jsonOutput {
 				type pinnedPkg struct {
-					Raw     string `json:"raw"`
-					ID      string `json:"id"`
-					Manager string `json:"manager,omitempty"`
+					Raw       string     `json:"raw"`
+					ID        string     `json:"id"`
+					Manager   string     `json:"manager,omitempty"`
+					Version   string     `json:"version,omitempty"`
+					Reason    string     `json:"reason,omitempty"`
+					ExpiresAt *time.Time `json:"expires_at,omitempty"`
+					Expired   bool       `json:"expired"`
 				}
 				type jsonPinnedOutput struct {
 					SchemaVersion string      `json:"schema_version"`
@@ -139,32 +209,54 @@ func newPinnedCmd() *cobra.Command {
 				}
 				out := jsonPinnedOutput{
 					SchemaVersion: "1.0.0",
-					Count:         len(cfg.PinnedPackages),
-					Packages:      make([]pinnedPkg, 0, len(cfg.PinnedPackages)),
+					Count:         len(cfg.Pins),
+					Packages:      make([]pinnedPkg, 0, len(cfg.Pins)),
 				}
-				for _, p := range cfg.PinnedPackages {
-					item := pinnedPkg{Raw: p, ID: p}
-					if idx := strings.IndexByte(p, ':'); idx > 0 && idx < len(p)-1 {
-						item.Manager = p[:idx]
-						item.ID = p[idx+1:]
+				for _, p := range cfg.Pins {
+					rawID := p.ID
+					if p.Manager != "" {
+						rawID = p.Manager + ":" + p.ID
+					}
+					item := pinnedPkg{
+						Raw:       rawID,
+						ID:        p.ID,
+						Manager:   p.Manager,
+						Version:   p.Version,
+						Reason:    p.Reason,
+						ExpiresAt: p.ExpiresAt,
+						Expired:   p.IsExpired(),
 					}
 					out.Packages = append(out.Packages, item)
 				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetEscapeHTML(false)
 				enc.SetIndent("", "  ")
 				return enc.Encode(out)
 			}
-			if len(cfg.PinnedPackages) == 0 {
+			if len(cfg.Pins) == 0 {
 				cmd.Println("No packages are currently pinned.")
 				return nil
 			}
-			cmd.Printf("Pinned packages (%d):\n", len(cfg.PinnedPackages))
-			for _, p := range cfg.PinnedPackages {
-				if idx := strings.IndexByte(p, ':'); idx > 0 && idx < len(p)-1 {
-					cmd.Printf("  - %s (manager: %s)\n", p[idx+1:], p[:idx])
-				} else {
-					cmd.Printf("  - %s (all managers)\n", p)
+			cmd.Printf("Pinned packages (%d):\n", len(cfg.Pins))
+			for _, p := range cfg.Pins {
+				mgrStr := "all managers"
+				if p.Manager != "" {
+					mgrStr = "manager: " + p.Manager
 				}
+				line := fmt.Sprintf("  - %s (%s)", p.ID, mgrStr)
+				if p.Version != "" {
+					line += fmt.Sprintf(" [constraint: %s]", p.Version)
+				}
+				if p.Reason != "" {
+					line += fmt.Sprintf(" [reason: %s]", p.Reason)
+				}
+				if p.ExpiresAt != nil {
+					line += fmt.Sprintf(" [expires: %s]", p.ExpiresAt.Format("2006-01-02"))
+					if p.IsExpired() {
+						line += " [EXPIRED]"
+					}
+				}
+				cmd.Println(line)
 			}
 			return nil
 		},

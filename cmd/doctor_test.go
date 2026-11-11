@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/karan-banwasi/patchwork/internal/config"
 )
 
 func TestDoctorCmd(t *testing.T) {
@@ -40,6 +42,49 @@ func TestCleanupCmd_UnknownManager(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "unknown package manager") {
 		t.Fatalf("expected unknown package manager error, got: %v", err)
+	}
+}
+
+func TestDoctorCmd_DisabledManager(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	cfg := &config.Config{
+		DisabledManagers: []string{"cargo"},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	buf := new(bytes.Buffer)
+	cmd := NewRootCmd()
+	cmd.SetOut(buf)
+	cmd.SetArgs([]string{"doctor"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor execute: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Disabled (config)") {
+		t.Errorf("expected doctor to show 'Disabled (config)' for disabled manager, got:\n%s", out)
+	}
+}
+
+func TestCleanupCmd_DisabledManager(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	cfg := &config.Config{
+		DisabledManagers: []string{"cargo"},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"cleanup", "-m", "cargo"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "disabled in configuration") {
+		t.Fatalf("expected disabled in configuration error, got: %v", err)
 	}
 }
 

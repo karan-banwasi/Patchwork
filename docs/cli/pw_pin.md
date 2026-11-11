@@ -13,7 +13,10 @@ pw pin <package-id> [package-id...] [flags]
 ### Options
 
 ```
-  -h, --help   help for pin
+      --expires string   Expiration date or duration for pin (e.g. '2026-12-31', '30d')
+  -h, --help             help for pin
+      --reason string    Reason for pinning this package
+      --version string   Version constraint for pin (e.g. '<23', '~22.0.0')
 ```
 
 ### SEE ALSO

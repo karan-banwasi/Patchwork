@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/spf13/cobra"
@@ -20,7 +21,11 @@ func getDefaultRegistry() *pm.Registry {
 	if registryOverride != nil {
 		return registryOverride
 	}
-	return pm.NewRegistry(defaultManagers()...)
+	reg := pm.NewRegistry(defaultManagers()...)
+	if cfg, err := config.Load(); err == nil && cfg != nil && len(cfg.DisabledManagers) > 0 {
+		reg.SetDisabled(cfg.DisabledManagers)
+	}
+	return reg
 }
 
 // configureRegistryIO attaches the command's standard streams to all managers in the registry.
@@ -49,6 +54,7 @@ func NewRootCmd() *cobra.Command {
 		newUpgradeCmd(),
 		newCleanupCmd(),
 		newDoctorCmd(),
+		newConfigCmd(),
 		newPinCmd(),
 		newUnpinCmd(),
 		newPinnedCmd(),

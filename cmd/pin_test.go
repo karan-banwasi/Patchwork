@@ -133,3 +133,62 @@ func TestPinnedCmd_JSON(t *testing.T) {
 		t.Errorf("expected scoop manager in json output, got: %s", out)
 	}
 }
+
+func TestPinCmd_RicherFlagsAndOutput(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	// Pin with rich metadata
+	buf := new(bytes.Buffer)
+	pinCmd := NewRootCmd()
+	pinCmd.SetOut(buf)
+	pinCmd.SetArgs([]string{"pin", "npm:node", "--version", "<23", "--reason", "breaks database driver", "--expires", "2029-12-31"})
+	if err := pinCmd.Execute(); err != nil {
+		t.Fatalf("pin execute: %v", err)
+	}
+	pinOutput := buf.String()
+	if !strings.Contains(pinOutput, `<23`) || !strings.Contains(pinOutput, "breaks database driver") {
+		t.Errorf("expected rich pin output details, got: %s", pinOutput)
+	}
+
+	// Verify text output in pinned
+	buf.Reset()
+	pinnedCmd := NewRootCmd()
+	pinnedCmd.SetOut(buf)
+	pinnedCmd.SetArgs([]string{"pinned"})
+	if err := pinnedCmd.Execute(); err != nil {
+		t.Fatalf("pinned execute: %v", err)
+	}
+	pinnedText := buf.String()
+	if !strings.Contains(pinnedText, "node") || !strings.Contains(pinnedText, "[constraint: <23]") || !strings.Contains(pinnedText, "[reason: breaks database driver]") {
+		t.Errorf("expected constraint and reason in text output, got: %s", pinnedText)
+	}
+
+	// Verify JSON output in pinned --json
+	buf.Reset()
+	jsonCmd := NewRootCmd()
+	jsonCmd.SetOut(buf)
+	jsonCmd.SetArgs([]string{"pinned", "--json"})
+	if err := jsonCmd.Execute(); err != nil {
+		t.Fatalf("pinned --json execute: %v", err)
+	}
+	jsonOut := buf.String()
+	if !strings.Contains(jsonOut, `"version": "<23"`) || !strings.Contains(jsonOut, `"reason": "breaks database driver"`) {
+		t.Errorf("expected version and reason in JSON output, got: %s", jsonOut)
+	}
+	if !strings.Contains(jsonOut, `"expired": false`) {
+		t.Errorf("expected expired false in JSON output, got: %s", jsonOut)
+	}
+
+	// Unpin
+	buf.Reset()
+	unpinCmd := NewRootCmd()
+	unpinCmd.SetOut(buf)
+	unpinCmd.SetArgs([]string{"unpin", "npm:node"})
+	if err := unpinCmd.Execute(); err != nil {
+		t.Fatalf("unpin execute: %v", err)
+	}
+	if !strings.Contains(buf.String(), `Unpinned package "npm:node"`) {
+		t.Errorf("expected unpinned output, got: %s", buf.String())
+	}
+}

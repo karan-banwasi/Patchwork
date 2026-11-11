@@ -55,6 +55,56 @@ func TestRegistry_ActiveManagers(t *testing.T) {
 	}
 }
 
+func TestRegistry_DisabledManagers(t *testing.T) {
+	m1 := &mockManager{name: "winget", aliases: []string{"windows-get"}, available: true}
+	m2 := &mockManager{name: "cargo", aliases: []string{"rust"}, available: true}
+	m3 := &mockManager{name: "npm", available: true}
+
+	reg := NewRegistry(m1, m2, m3)
+	if reg.IsDisabled("cargo") {
+		t.Errorf("expected cargo not to be disabled initially")
+	}
+
+	reg.SetDisabled([]string{"cargo"})
+	if !reg.IsDisabled("cargo") {
+		t.Errorf("expected cargo to be disabled")
+	}
+	if !reg.IsDisabled("rust") {
+		t.Errorf("expected cargo alias 'rust' to be disabled")
+	}
+	if reg.IsDisabled("winget") {
+		t.Errorf("expected winget NOT to be disabled")
+	}
+
+	active := reg.ActiveManagers(context.Background())
+	if len(active) != 2 {
+		t.Fatalf("expected 2 active managers (excluding cargo), got %d", len(active))
+	}
+	for _, a := range active {
+		if a.Name() == "cargo" {
+			t.Errorf("active managers should not include disabled cargo")
+		}
+	}
+
+	_, _, err := reg.FetchUpdates(context.Background(), "cargo")
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("expected disabled error for cargo, got %v", err)
+	}
+
+	m1.updates = []PackageUpdate{{Name: "Git", Id: "Git.Git", Version: "1.0", AvailableVersion: "2.0", ManagerName: "winget"}}
+	m2.updates = []PackageUpdate{{Name: "ripgrep", Id: "ripgrep", Version: "1.0", AvailableVersion: "2.0", ManagerName: "cargo"}}
+	updates, warnings, err := reg.FetchUpdates(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error fetching updates: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", warnings)
+	}
+	if len(updates) != 1 || updates[0].Id != "Git.Git" {
+		t.Errorf("expected only winget updates, got %v", updates)
+	}
+}
+
 func TestRegistry_FetchAllUpdates(t *testing.T) {
 	m1 := &mockManager{
 		name:      "winget",

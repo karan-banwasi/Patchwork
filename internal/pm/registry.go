@@ -17,17 +17,76 @@ const DefaultFetchTimeout = 2 * time.Minute
 
 // Registry manages the set of supported package managers.
 type Registry struct {
-	managers     []Manager
-	FetchTimeout time.Duration
-	SkipRefresh  bool
-	Offline      bool
+	managers         []Manager
+	disabledManagers map[string]bool
+	FetchTimeout     time.Duration
+	SkipRefresh      bool
+	Offline          bool
 }
 
 // NewRegistry creates a new Registry populated with the provided managers.
 func NewRegistry(managers ...Manager) *Registry {
 	return &Registry{
-		managers: managers,
+		managers:         managers,
+		disabledManagers: make(map[string]bool),
 	}
+}
+
+// SetDisabled configures the list of package managers to disable.
+func (r *Registry) SetDisabled(names []string) {
+	if r == nil {
+		return
+	}
+	if r.disabledManagers == nil {
+		r.disabledManagers = make(map[string]bool)
+	} else {
+		for k := range r.disabledManagers {
+			delete(r.disabledManagers, k)
+		}
+	}
+	for _, n := range names {
+		trimmed := strings.ToLower(strings.TrimSpace(n))
+		if trimmed != "" {
+			r.disabledManagers[trimmed] = true
+		}
+	}
+}
+
+// IsDisabled reports whether a package manager is disabled in configuration.
+func (r *Registry) IsDisabled(name string) bool {
+	if r == nil || len(r.disabledManagers) == 0 {
+		return false
+	}
+	norm := strings.ToLower(strings.TrimSpace(name))
+	if norm == "" {
+		return false
+	}
+	if r.disabledManagers[norm] {
+		return true
+	}
+	for _, m := range r.managers {
+		if strings.EqualFold(m.Name(), norm) {
+			if r.disabledManagers[strings.ToLower(m.Name())] {
+				return true
+			}
+			for _, a := range m.Aliases() {
+				if r.disabledManagers[strings.ToLower(a)] {
+					return true
+				}
+			}
+		}
+		for _, a := range m.Aliases() {
+			if strings.EqualFold(a, norm) {
+				if r.disabledManagers[strings.ToLower(m.Name())] {
+					return true
+				}
+				if r.disabledManagers[strings.ToLower(a)] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Register adds a package manager to the registry.
@@ -134,7 +193,7 @@ func (r *Registry) ActiveManagers(ctx context.Context) []Manager {
 
 	var active []Manager
 	for i, m := range r.managers {
-		if availFlags[i] {
+		if availFlags[i] && !r.IsDisabled(m.Name()) {
 			active = append(active, m)
 		}
 	}
@@ -188,6 +247,9 @@ func (r *Registry) FetchUpdates(ctx context.Context, filter ...string) ([]Packag
 			mgr, exists := r.GetManager(name)
 			if !exists {
 				return nil, nil, fmt.Errorf("unknown package manager %q (supported: %s)", name, strings.Join(r.ManagerNames(), ", "))
+			}
+			if r.IsDisabled(mgr.Name()) {
+				return nil, nil, fmt.Errorf("package manager %q is disabled in configuration", name)
 			}
 			if !mgr.IsAvailable(ctx) {
 				return nil, nil, fmt.Errorf("package manager %q is not installed or available on this system", name)

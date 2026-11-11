@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/upgrade"
@@ -399,5 +400,76 @@ func TestUpgradeCmd_DryRunAllPlan(t *testing.T) {
 
 	if len(mockMgr.upgradedIDs) != 0 {
 		t.Errorf("expected 0 packages upgraded during dry-run, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+type mockOptionsManager struct {
+	mockUpgradeManager
+	configuredOpts pm.UpgradeOptions
+}
+
+func (m *mockOptionsManager) ConfigureOptions(opts pm.UpgradeOptions) {
+	m.configuredOpts = opts
+}
+
+func TestUpgradeCmd_DefaultFlagsMerging(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	fVal := false
+	tVal := true
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			AcceptAgreements: &fVal,
+			TrustRepository:  &tVal,
+			Timeout:          "15s",
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	mockMgr := &mockOptionsManager{
+		mockUpgradeManager: mockUpgradeManager{
+			name: "mockpm",
+			updates: []pm.PackageUpdate{
+				{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Run without explicit flags: defaults from config should apply
+	cmd := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("upgrade execute: %v", err)
+	}
+
+	if mockMgr.configuredOpts.AcceptAgreements != false {
+		t.Errorf("expected AcceptAgreements to be false from config default, got: %v", mockMgr.configuredOpts.AcceptAgreements)
+	}
+	if mockMgr.configuredOpts.TrustRepository != true {
+		t.Errorf("expected TrustRepository to be true from config default, got: %v", mockMgr.configuredOpts.TrustRepository)
+	}
+
+	// Run with explicit flag overriding config: --accept-agreements
+	mockMgr.configuredOpts = pm.UpgradeOptions{}
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&stdout)
+	cmd2.SetErr(&stderr)
+	cmd2.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh", "--accept-agreements"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("upgrade execute: %v", err)
+	}
+
+	if mockMgr.configuredOpts.AcceptAgreements != true {
+		t.Errorf("expected explicit CLI flag --accept-agreements to override config default, got: %v", mockMgr.configuredOpts.AcceptAgreements)
 	}
 }

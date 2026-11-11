@@ -97,7 +97,9 @@ func newDoctorCmd() *cobra.Command {
 				status := "Not Found"
 				binPath := "-"
 				ver := "-"
-				if avail {
+				if reg.IsDisabled(name) {
+					status = "Disabled (config)"
+				} else if avail {
 					status = "Available"
 					if loc, ok := mgr.(pm.Locator); ok {
 						if p, err := loc.Path(); err == nil && p != "" {

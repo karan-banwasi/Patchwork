@@ -155,7 +155,7 @@ func OrderTargets(reg *pm.Registry, pkgs []pm.PackageUpdate) []pm.PackageUpdate 
 	return ordered
 }
 
-// FilterPins checks packages against config.PinnedPackages.
+// FilterPins checks packages against config pins (supporting version constraints and expiry).
 func FilterPins(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageUpdate, skipped []Result, err error) {
 	if ignorePins {
 		return pkgs, nil, nil
@@ -164,14 +164,26 @@ func FilterPins(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageU
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
 	}
-	if len(cfg.PinnedPackages) == 0 {
+	if len(cfg.PinnedPackages) == 0 && len(cfg.Pins) == 0 {
 		return pkgs, nil, nil
 	}
 	for _, pkg := range pkgs {
-		if cfg.IsPinnedForManager(pkg.ManagerName, pkg.Id, pkg.Name) {
+		pin, violated := cfg.MatchPin(pkg.ManagerName, pkg.Id, pkg.Name, pkg.AvailableVersion)
+		if violated {
+			status := StatusSkippedPinned
+			if pin != nil && (pin.Version != "" || pin.Reason != "") {
+				var desc []string
+				if pin.Version != "" {
+					desc = append(desc, pin.Version)
+				}
+				if pin.Reason != "" {
+					desc = append(desc, pin.Reason)
+				}
+				status = Status(fmt.Sprintf("Skipped (pinned: %s)", strings.Join(desc, " - ")))
+			}
 			skipped = append(skipped, Result{
 				Package: pkg,
-				Status:  StatusSkippedPinned,
+				Status:  status,
 			})
 			continue
 		}

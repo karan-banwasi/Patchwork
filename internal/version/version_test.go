@@ -99,3 +99,61 @@ func TestCandidateUpgrade(t *testing.T) {
 		t.Errorf("FAIL: 1.0.0-candidate should be upgradeable to 1.0.0")
 	}
 }
+
+func TestEvaluateConstraint(t *testing.T) {
+	tests := []struct {
+		name       string
+		eco        string
+		ver        string
+		constraint string
+		expected   bool
+		wantErr    bool
+	}{
+		{"empty constraint blocks", "generic", "1.0.0", "", false, false},
+		{"empty version blocks", "generic", "", "<23", false, false},
+		{"exact match true", "generic", "22.1.0", "22.1.0", true, false},
+		{"exact match false", "generic", "22.1.1", "22.1.0", false, false},
+		{"equal operator true", "generic", "22.1.0", "=22.1.0", true, false},
+		{"double equal true", "generic", "22.1.0", "==22.1.0", true, false},
+		{"not equal true", "generic", "22.1.1", "!=22.1.0", true, false},
+		{"not equal false", "generic", "22.1.0", "!=22.1.0", false, false},
+		{"less than true", "generic", "22.5.0", "<23", true, false},
+		{"less than false boundary", "generic", "23.0.0", "<23", false, false},
+		{"less than false higher", "generic", "24.1.0", "<23", false, false},
+		{"less than or equal boundary", "generic", "22.5.0", "<=22.5.0", true, false},
+		{"less than or equal lower", "generic", "22.4.9", "<=22.5.0", true, false},
+		{"less than or equal higher", "generic", "22.5.1", "<=22.5.0", false, false},
+		{"greater than true", "generic", "1.0.1", ">1.0.0", true, false},
+		{"greater than false boundary", "generic", "1.0.0", ">1.0.0", false, false},
+		{"greater than false lower", "generic", "0.9.9", ">1.0.0", false, false},
+		{"greater than or equal boundary", "generic", "1.0.0", ">=1.0.0", true, false},
+		{"greater than or equal higher", "generic", "1.0.1", ">=1.0.0", true, false},
+		{"greater than or equal lower", "generic", "0.9.9", ">=1.0.0", false, false},
+		{"tilde patch allow", "generic", "1.2.5", "~1.2.3", true, false},
+		{"tilde patch disallow minor bump", "generic", "1.3.0", "~1.2.3", false, false},
+		{"tilde patch disallow lower", "generic", "1.2.2", "~1.2.3", false, false},
+		{"tilde minor format allow", "generic", "1.2.9", "~1.2", true, false},
+		{"tilde minor format disallow next minor", "generic", "1.3.0", "~1.2", false, false},
+		{"caret minor allow", "generic", "1.3.5", "^1.2.0", true, false},
+		{"caret disallow next major", "generic", "2.0.0", "^1.2.0", false, false},
+		{"caret disallow lower", "generic", "1.1.9", "^1.2.0", false, false},
+		{"caret zero major allow patch", "generic", "0.2.5", "^0.2.1", true, false},
+		{"caret zero major disallow minor bump", "generic", "0.3.0", "^0.2.1", false, false},
+		{"compound range allow", "generic", "21.5.0", ">=20.0, <23.0", true, false},
+		{"compound range disallow lower", "generic", "19.9.0", ">=20.0, <23.0", false, false},
+		{"compound range disallow upper", "generic", "23.0.0", ">=20.0, <23.0", false, false},
+		{"invalid constraint missing operand", "generic", "1.0.0", "<", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EvaluateConstraint(tt.eco, tt.ver, tt.constraint)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("EvaluateConstraint(%q, %q, %q) unexpected error: %v", tt.eco, tt.ver, tt.constraint, err)
+			}
+			if got != tt.expected {
+				t.Errorf("EvaluateConstraint(%q, %q, %q) = %v, expected %v", tt.eco, tt.ver, tt.constraint, got, tt.expected)
+			}
+		})
+	}
+}

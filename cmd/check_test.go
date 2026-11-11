@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
@@ -217,5 +218,68 @@ func TestCheckCmd_JsonSchemaVersion(t *testing.T) {
 	}
 	if parsed.Count != 1 {
 		t.Errorf("expected count 1, got %d", parsed.Count)
+	}
+}
+
+func TestCheckCmd_DefaultsAndDisabledManagers(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	noRef := true
+	cfg := &config.Config{
+		DisabledManagers: []string{"mockpm2"},
+		Defaults: config.DefaultsConfig{
+			Timeout:   "10s",
+			NoRefresh: &noRef,
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	m1 := &mockCheckManager{
+		name: "mockpm1",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg1", Name: "Pkg1", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm1"},
+		},
+	}
+	m2 := &mockCheckManager{
+		name: "mockpm2",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg2", Name: "Pkg2", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm2"},
+		},
+	}
+
+	reg := pm.NewRegistry(m1, m2)
+	reg.SetDisabled(cfg.DisabledManagers)
+	registryOverride = reg
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Check without args: mockpm2 is skipped
+	cmd := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"check", "--json"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected check to succeed: %v", err)
+	}
+	var parsed struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("json decode error: %v", err)
+	}
+	if parsed.Count != 1 {
+		t.Errorf("expected count 1 (mockpm2 disabled), got %d", parsed.Count)
+	}
+
+	// Explicit check on disabled manager should fail with informative error
+	cmd2 := NewRootCmd()
+	cmd2.SetArgs([]string{"check", "-m", "mockpm2"})
+	err := cmd2.Execute()
+	if err == nil || !strings.Contains(err.Error(), "disabled in configuration") {
+		t.Errorf("expected disabled manager error, got: %v", err)
 	}
 }

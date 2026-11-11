@@ -35,6 +35,18 @@ func newCheckCmd() *cobra.Command {
 			errOut := cmd.ErrOrStderr()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
 
+			cfg, _ := config.Load()
+			if cfg != nil {
+				if !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
+					if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
+						opts.timeout = d
+					}
+				}
+				if !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
+					opts.noRefresh = *cfg.Defaults.NoRefresh
+				}
+			}
+
 			if opts.offline {
 				opts.noRefresh = true
 				registry.SetOffline(true)
