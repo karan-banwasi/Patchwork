@@ -378,8 +378,9 @@ func (e *Executor) executeManagerGroup(
 			continue
 		}
 
-		// Check for DetailedBulkUpgrader first to report per-package results
-		if detailed, ok := mgr.(pm.DetailedBulkUpgrader); ok {
+		detailed, isDetailed := mgr.(pm.DetailedBulkUpgrader)
+		bulk, isBulk := mgr.(pm.BulkUpgrader)
+		if isDetailed || isBulk {
 			var batchItems []indexedTarget
 			var batchIDs []string
 			j := i
@@ -393,86 +394,69 @@ func (e *Executor) executeManagerGroup(
 			if len(batchItems) > 1 {
 				fmt.Fprintf(out, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
 				start := time.Now()
-				bulkResults, err := detailed.UpgradePackagesDetailed(ctx, batchIDs)
-				dur := time.Since(start) / time.Duration(len(batchItems))
-				if err != nil && len(bulkResults) == 0 {
-					for _, bi := range batchItems {
-						fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
-						targetResults[bi.origIdx] = Result{
-							Package:  bi.pkg,
-							Status:   StatusFailed,
-							Duration: dur,
-							Error:    err,
+				if isDetailed {
+					bulkResults, err := detailed.UpgradePackagesDetailed(ctx, batchIDs)
+					dur := time.Since(start) / time.Duration(len(batchItems))
+					if err != nil && len(bulkResults) == 0 {
+						for _, bi := range batchItems {
+							fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
+							targetResults[bi.origIdx] = Result{
+								Package:  bi.pkg,
+								Status:   StatusFailed,
+								Duration: dur,
+								Error:    err,
+							}
+						}
+					} else {
+						resMap := make(map[string]pm.BulkPackageResult)
+						for _, br := range bulkResults {
+							resMap[strings.ToLower(br.ID)] = br
+						}
+						for _, bi := range batchItems {
+							br, found := resMap[strings.ToLower(bi.pkg.Id)]
+							if found && br.Succeeded {
+								fmt.Fprintf(out, "Successfully upgraded %s\n", bi.pkg.Id)
+								targetResults[bi.origIdx] = Result{
+									Package:  bi.pkg,
+									Status:   StatusSucceeded,
+									Duration: dur,
+								}
+							} else {
+								pkgErr := err
+								if found && br.Error != nil {
+									pkgErr = br.Error
+								} else if pkgErr == nil {
+									pkgErr = fmt.Errorf("package upgrade failed")
+								}
+								fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, pkgErr)
+								targetResults[bi.origIdx] = Result{
+									Package:  bi.pkg,
+									Status:   StatusFailed,
+									Duration: dur,
+									Error:    pkgErr,
+								}
+							}
 						}
 					}
 				} else {
-					resMap := make(map[string]pm.BulkPackageResult)
-					for _, br := range bulkResults {
-						resMap[strings.ToLower(br.ID)] = br
-					}
+					err := bulk.UpgradePackages(ctx, batchIDs)
+					dur := time.Since(start) / time.Duration(len(batchItems))
 					for _, bi := range batchItems {
-						br, found := resMap[strings.ToLower(bi.pkg.Id)]
-						if found && br.Succeeded {
+						if err != nil {
+							fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
+							targetResults[bi.origIdx] = Result{
+								Package:  bi.pkg,
+								Status:   StatusFailed,
+								Duration: dur,
+								Error:    err,
+							}
+						} else {
 							fmt.Fprintf(out, "Successfully upgraded %s\n", bi.pkg.Id)
 							targetResults[bi.origIdx] = Result{
 								Package:  bi.pkg,
 								Status:   StatusSucceeded,
 								Duration: dur,
 							}
-						} else {
-							pkgErr := err
-							if found && br.Error != nil {
-								pkgErr = br.Error
-							} else if pkgErr == nil {
-								pkgErr = fmt.Errorf("package upgrade failed")
-							}
-							fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, pkgErr)
-							targetResults[bi.origIdx] = Result{
-								Package:  bi.pkg,
-								Status:   StatusFailed,
-								Duration: dur,
-								Error:    pkgErr,
-							}
-						}
-					}
-				}
-				i = j - 1
-				continue
-			}
-		}
-
-		// Fallback for standard BulkUpgrader
-		if bulk, ok := mgr.(pm.BulkUpgrader); ok {
-			var batchItems []indexedTarget
-			var batchIDs []string
-			j := i
-			for ; j < len(items); j++ {
-				if vErr := mgr.ValidateID(items[j].pkg.Id); vErr != nil {
-					break
-				}
-				batchItems = append(batchItems, items[j])
-				batchIDs = append(batchIDs, items[j].pkg.Id)
-			}
-			if len(batchItems) > 1 {
-				fmt.Fprintf(out, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
-				start := time.Now()
-				err := bulk.UpgradePackages(ctx, batchIDs)
-				dur := time.Since(start) / time.Duration(len(batchItems))
-				for _, bi := range batchItems {
-					if err != nil {
-						fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
-						targetResults[bi.origIdx] = Result{
-							Package:  bi.pkg,
-							Status:   StatusFailed,
-							Duration: dur,
-							Error:    err,
-						}
-					} else {
-						fmt.Fprintf(out, "Successfully upgraded %s\n", bi.pkg.Id)
-						targetResults[bi.origIdx] = Result{
-							Package:  bi.pkg,
-							Status:   StatusSucceeded,
-							Duration: dur,
 						}
 					}
 				}

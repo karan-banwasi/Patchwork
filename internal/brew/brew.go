@@ -16,6 +16,15 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
+var (
+	_ pm.Manager        = (*BrewManager)(nil)
+	_ pm.Locator        = (*BrewManager)(nil)
+	_ pm.Cleaner        = (*BrewManager)(nil)
+	_ pm.Refresher      = (*BrewManager)(nil)
+	_ pm.BulkUpgrader   = (*BrewManager)(nil)
+	_ pm.IOConfigurable = (*BrewManager)(nil)
+)
+
 // BrewManager implements the pm.Manager interface for Homebrew formulas and casks.
 type BrewManager struct {
 	runner  pm.Runner

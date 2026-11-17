@@ -4,7 +4,7 @@
 Patchwork is a cross-platform CLI utility designed to iterate through packages that have available updates and manage them seamlessly across Windows, macOS, and Linux.
 
 ## Technology Stack
-- **Language**: Go 1.27.3 (Primary)
+- **Language**: Go 1.27.4 (Primary)
 - **Target OS**: Windows, macOS, Linux (Cross-Platform)
 - **CLI Framework**: Cobra (`github.com/spf13/cobra`)
 - **Interactive UI**: Built-in arrow-key/spacebar interactive TUI selector keyed by index (`cmd/selector.go`)
@@ -19,24 +19,28 @@ Patchwork is a cross-platform CLI utility designed to iterate through packages t
    - **Cross-Platform**: npm Global (`npm`), pnpm Global (`pnpm`), Bun Global (`bun`), .NET Global Tools (`dotnet`), uv Python Tools (`uv`), pipx Python Apps (`pipx`), Rust Cargo Crates (`cargo`), Rustup Toolchains (`rustup`), RubyGems (`gem`), mise (`mise`), asdf (`asdf`), VS Code Extensions (`vscode`).
 2. **Platform Awareness**: The CLI automatically filters and detects package managers appropriate for the host OS via build tags and runtime availability probes.
 3. **Interactive Selection & Batching**: Provides an interactive arrow-key/spacebar checkbox selector (`↑`/`↓`, `Space` to toggle, `→` all, `←` none, `Enter` to confirm) keyed internally by index. Supports detailed bulk upgrades for managers that support it (e.g. Chocolatey).
-4. **Command Pipeline**: Structured `plan` / `execute` pipeline (`internal/upgrade`) featuring dry-run simulation, deferral of self-updating shells/terminals, and pin enforcement.
+4. **Command Pipeline**: Structured `plan` / `execute` pipeline (`internal/upgrade`) featuring dry-run simulation, deferral of self-updating shells/terminals, pin enforcement, policy filtering (`--exclude`, `--level`), changelog previews (`--changelog`), and bounded cross-manager parallelism (`-j`/`--concurrency`).
 5. **Ecosystem-Aware Version Comparison**: Semver and epoch-aware comparison (`internal/version`) preventing false upgrades and downgrades.
-6. **Package Pinning**: Skip updates for selected packages globally or per-manager (`pw pin`, `pw unpin`, `pw pinned`), backed by atomic config writes.
-7. **Documented Exit Codes & Machine Outputs**: Stable exit codes (0, 1, 2, 3) and JSON schemas (`schema_version: "1.0.0"`).
+6. **Package Pinning & Configuration**: Skip updates globally or per-manager with optional version constraints, reasons, and expiration (`pw pin`, `pw unpin`, `pw pinned`), managed alongside defaults via `pw config` and backed by atomic config writes.
+7. **Scheduled Checks, History & Profiles**: OS-native background update checks and desktop notifications (`pw schedule`), persistent upgrade history with version rollback (`pw history`, `pw rollback`), and portable machine profile export/import (`pw export`, `pw import`).
+8. **Documented Exit Codes & Machine Outputs**: Stable exit codes (0, 1, 2, 3) and JSON schemas (`schema_version: "1.0.0"`).
 
 ## Architecture & Code Layout
-- `main.go`: Entry point for the CLI tool. Points execution to the Cobra command tree.
-- `cmd/`: Houses Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`, `doctor.go`, `cleanup.go`, `pin.go`, `selfupdate.go`, etc.).
+- `main.go` & `cmd/pw/main.go`: Entry points for the CLI tool (supporting both repo-root builds and `go install .../cmd/pw@latest`).
+- `cmd/`: Houses Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`, `doctor.go`, `cleanup.go`, `pin.go`, `config.go`, `history.go`, `rollback.go`, `export.go`, `import.go`, `schedule.go`, `selfupdate.go`, `version.go`).
   - `registry_common.go` / `registry_windows.go` / `registry_darwin.go` / `registry_linux.go` / `registry_other.go`: Platform-gated registration of default package managers.
 - `internal/`: Core business logic decoupled by subsystem and package manager:
   - `internal/pm/`: Core `pm.Manager` interface, extension interfaces, `Registry`, and `Runner` abstraction.
-  - `internal/upgrade/`: Command pipeline (`Plan`, `Executor`, `Summary`, JSON serialization).
+  - `internal/upgrade/`: Command pipeline (`Plan`, `Executor`, `Summary`, policy filtering, changelog previews, JSON serialization).
   - `internal/version/`: Ecosystem-aware version comparison (`Compare`, `IsUpgrade`).
   - `internal/config/`: Configuration and completion cache with atomic file I/O.
+  - `internal/history/`: Upgrade run history store and rollback metadata.
+  - `internal/profile/`: Portable `Patchfile` DSL and JSON machine profile parser/exporter.
+  - `internal/schedule/`: Native OS background task scheduling and desktop notifications.
   - `internal/exitcodes/`: Standardized process exit codes (`ExitSuccess`, `ExitGeneralError`, `ExitUpgradeFailure`, `ExitCanceled`).
   - `internal/httputil/`: Resilient HTTP client with retry backoff and offline support.
   - `internal/<manager>/`: Concrete drivers (`brew`, `mas`, `winget`, `scoop`, `choco`, `psresource`, `apt`, `dnf`, `pacman`, `zypper`, `flatpak`, `snap`, `npm`, `pnpm`, `bun`, `dotnet`, `uv`, `pipx`, `cargo`, `rustup`, `gem`, `mise`, `asdf`, `vscode`).
-- `docs/`: Reference documentation (`env-vars.md`, `exit-codes.md`, `json-schema.md`) and CLI reference (`docs/cli/`).
+- `docs/`: Reference documentation (`env-vars.md`, `exit-codes.md`, `json-schema.md`, `adding-a-package-manager.md`, `code-signing.md`) and CLI reference (`docs/cli/`).
 
 ## Development & Testing Guidelines
 - **Cross-Platform Support**: Use Go's standard library cross-platform features (`os.UserConfigDir()`, `runtime.GOOS`). Isolate platform-specific features (e.g., Windows UAC elevation, `conhost.exe` launching) behind build tags (`//go:build windows` and `//go:build !windows`).

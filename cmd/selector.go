@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -64,10 +62,10 @@ func (s *IndexMultiSelector) Select(message string, candidates []pm.PackageUpdat
 		stdout = os.Stdout
 	}
 
-	inFile, ok := stdin.(*os.File)
-	if !ok || !term.IsTerminal(int(inFile.Fd())) {
+	if !isInteractive(stdin) {
 		return nil, ErrNonInteractive
 	}
+	inFile := stdin.(*os.File)
 
 	var outFile *os.File
 	if f, ok := stdout.(*os.File); ok {
@@ -340,49 +338,6 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 			}
 		}
 	}
-}
-
-// parseSelectionIndices parses input like "1, 3-5, 7" into sorted unique 0-based slice indices.
-func parseSelectionIndices(input string, total int) ([]int, error) {
-	seen := make(map[int]bool)
-	parts := strings.Split(input, ",")
-	for _, p := range parts {
-		token := strings.TrimSpace(p)
-		if token == "" {
-			continue
-		}
-		if strings.Contains(token, "-") {
-			rangeParts := strings.Split(token, "-")
-			if len(rangeParts) != 2 {
-				return nil, fmt.Errorf("invalid range specification %q", token)
-			}
-			start, err1 := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-			end, err2 := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-			if err1 != nil || err2 != nil || start > end || start < 1 || end > total {
-				return nil, fmt.Errorf("invalid range %q (must be between 1 and %d)", token, total)
-			}
-			for i := start; i <= end; i++ {
-				seen[i-1] = true
-			}
-		} else {
-			num, err := strconv.Atoi(token)
-			if err != nil || num < 1 || num > total {
-				return nil, fmt.Errorf("invalid package number %q (must be between 1 and %d)", token, total)
-			}
-			seen[num-1] = true
-		}
-	}
-
-	if len(seen) == 0 {
-		return nil, nil
-	}
-
-	result := make([]int, 0, len(seen))
-	for idx := range seen {
-		result = append(result, idx)
-	}
-	sort.Ints(result)
-	return result, nil
 }
 
 // MockMultiSelector is a mock MultiSelector for headless automated tests.

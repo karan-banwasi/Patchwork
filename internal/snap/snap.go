@@ -110,15 +110,6 @@ func snapPath() (string, error) {
 	return "", fmt.Errorf("snap executable not found")
 }
 
-func wrapSudo(cmd string, args []string) (string, []string) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		if sudoPath, err := exec.LookPath("sudo"); err == nil {
-			return sudoPath, append([]string{cmd}, args...)
-		}
-	}
-	return cmd, args
-}
-
 func (s *SnapManager) UpgradePackage(ctx context.Context, id string) error {
 	return s.UpgradePackages(ctx, []string{id})
 }
@@ -150,7 +141,7 @@ func (s *SnapManager) UpgradePackages(ctx context.Context, ids []string) error {
 	}
 
 	args := append([]string{"refresh"}, ids...)
-	runExe, runArgs := wrapSudo(exe, args)
+	runExe, runArgs := pm.WrapSudo(exe, args)
 	if err := runner.Run(ctx, runExe, runArgs, s.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("snap refresh failed for %s: %w", strings.Join(ids, ", "), err)
 	}

@@ -100,7 +100,7 @@ func (d *DnfManager) InstallPackage(ctx context.Context, id, version string) err
 	if version != "" {
 		target = id + "-" + version
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"install", "-y", target})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"install", "-y", target})
 	if err := runner.Run(ctx, runExe, runArgs, d.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("dnf install failed for %s: %w", id, err)
 	}

@@ -8,14 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
-var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+var (
+	_ pm.Manager        = (*ChocoManager)(nil)
+	_ pm.Locator        = (*ChocoManager)(nil)
+	_ pm.IOConfigurable = (*ChocoManager)(nil)
+)
 
 // ChocoManager implements the pm.Manager interface for Chocolatey package manager.
 type ChocoManager struct {
@@ -139,15 +142,10 @@ func (c *ChocoManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 	return updates, nil
 }
 
-// GetAvailableUpdates is a package-level helper for convenience.
-func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	return NewChocoManager().GetAvailableUpdates(ctx)
-}
-
 // parseChocoOutput parses the output of `choco outdated`.
 func parseChocoOutput(output string) ([]pm.PackageUpdate, error) {
 	var updates []pm.PackageUpdate
-	cleanOutput := ansiEscape.ReplaceAllString(output, "")
+	cleanOutput := pm.StripANSI(output)
 	lines := strings.Split(cleanOutput, "\n")
 
 	for _, line := range lines {

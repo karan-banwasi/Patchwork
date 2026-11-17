@@ -113,15 +113,6 @@ func pacmanPath() (string, error) {
 	return "", fmt.Errorf("pacman executable not found")
 }
 
-func wrapSudo(cmd string, args []string) (string, []string) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		if sudoPath, err := exec.LookPath("sudo"); err == nil {
-			return sudoPath, append([]string{cmd}, args...)
-		}
-	}
-	return cmd, args
-}
-
 func (p *PacmanManager) Refresh(ctx context.Context) error {
 	exe, err := p.Path()
 	if err != nil {
@@ -131,7 +122,7 @@ func (p *PacmanManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"-Sy"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"-Sy"})
 	return runner.Run(ctx, runExe, runArgs, p.stdin, p.stdout, p.stderr)
 }
 
@@ -145,7 +136,7 @@ func (p *PacmanManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Wr
 		runner = pm.ExecRunner{}
 	}
 	fmt.Fprintln(out, "--- Cleaning up pacman package cache ---")
-	runExe, runArgs := wrapSudo(exe, []string{"-Sc", "--noconfirm"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"-Sc", "--noconfirm"})
 	return runner.Run(ctx, runExe, runArgs, p.stdin, out, errOut)
 }
 
@@ -180,7 +171,7 @@ func (p *PacmanManager) UpgradePackages(ctx context.Context, ids []string) error
 	}
 
 	args := append([]string{"-S", "--noconfirm"}, ids...)
-	runExe, runArgs := wrapSudo(exe, args)
+	runExe, runArgs := pm.WrapSudo(exe, args)
 	if err := runner.Run(ctx, runExe, runArgs, p.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("pacman upgrade failed for %s: %w", strings.Join(ids, ", "), err)
 	}
@@ -200,14 +191,8 @@ func (p *PacmanManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 	if err == nil {
 		runErr := runner.Run(ctx, checkExe, nil, nil, &stdout, &stderr)
 		if runErr != nil {
-			exitCode := -1
-			if exitErr, ok := runErr.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			} else if strings.Contains(runErr.Error(), "2") {
-				exitCode = 2
-			}
 			// exit code 2 means up to date
-			if exitCode != 2 {
+			if code, ok := pm.ExtractExitCode(runErr); !ok || code != 2 {
 				errMsg := strings.TrimSpace(stderr.String())
 				if errMsg != "" {
 					return nil, fmt.Errorf("checkupdates failed: %w (%s)", runErr, errMsg)
@@ -226,16 +211,8 @@ func (p *PacmanManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 
 	runErr := runner.Run(ctx, exe, []string{"-Qu"}, nil, &stdout, &stderr)
 	if runErr != nil {
-		exitCode := -1
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if strings.Contains(runErr.Error(), "2") {
-			exitCode = 2
-		} else if strings.Contains(runErr.Error(), "1") {
-			exitCode = 1
-		}
 		// exit code 1 (pacman -Qu) or 2 (checkupdates) means up to date
-		if exitCode != 1 && exitCode != 2 {
+		if code, ok := pm.ExtractExitCode(runErr); !ok || (code != 1 && code != 2) {
 			errMsg := strings.TrimSpace(stderr.String())
 			if errMsg != "" {
 				return nil, fmt.Errorf("pacman -Qu failed: %w (%s)", runErr, errMsg)

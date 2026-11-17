@@ -124,3 +124,55 @@ func TestAsdfManager_GetAvailableUpdates_Error(t *testing.T) {
 		t.Errorf("expected error to contain stderr, got: %v", err)
 	}
 }
+
+func TestAsdfManager_PartialAndTotalLookupWarnings(t *testing.T) {
+	sampleOutput := "nodejs 20.9.0 /home/user/.tool-versions\npython 3.11.0 /home/user/.tool-versions\n"
+
+	// Partial failure -> returns updates + 1 warning
+	mgr := NewAsdfManager()
+	mgr.exePath = "asdf"
+	mgr.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) > 0 && args[0] == "current" {
+				_, _ = stdout.Write([]byte(sampleOutput))
+				return nil
+			}
+			if len(args) >= 2 && args[0] == "latest" {
+				if args[1] == "nodejs" {
+					_, _ = stdout.Write([]byte("20.10.0\n"))
+					return nil
+				}
+				return errors.New("network timeout")
+			}
+			return nil
+		},
+	}
+
+	updates, warnings, err := mgr.GetAvailableUpdatesWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("expected partial lookup failure to succeed with warning, got err: %v", err)
+	}
+	if len(updates) != 1 || updates[0].Id != "nodejs" {
+		t.Errorf("expected nodejs update, got: %+v", updates)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0].Error(), "1 of 2 tools could not be checked") {
+		t.Errorf("expected partial failure warning, got: %v", warnings)
+	}
+
+	// Total failure -> returns fatal error
+	mgrAllFail := NewAsdfManager()
+	mgrAllFail.exePath = "asdf"
+	mgrAllFail.runner = &mockRunner{
+		runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			if len(args) > 0 && args[0] == "current" {
+				_, _ = stdout.Write([]byte(sampleOutput))
+				return nil
+			}
+			return errors.New("network unreachable")
+		},
+	}
+
+	if _, _, err := mgrAllFail.GetAvailableUpdatesWithWarnings(context.Background()); err == nil || !strings.Contains(err.Error(), "failed to check any asdf tools") {
+		t.Errorf("expected fatal error when all lookups fail, got: %v", err)
+	}
+}

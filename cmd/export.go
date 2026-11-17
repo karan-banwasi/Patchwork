@@ -46,15 +46,9 @@ func newExportCmd() *cobra.Command {
 			var targetMgrName string
 
 			if opts.manager != "" {
-				mgr, exists := registry.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-				}
-				if registry.IsDisabled(mgr.Name()) {
-					return fmt.Errorf("package manager %q is disabled in configuration", mgr.Name())
-				}
-				if !mgr.IsAvailable(ctx) {
-					return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+				mgr, err := resolveManager(ctx, registry, opts.manager, true, true)
+				if err != nil {
+					return err
 				}
 				if _, ok := mgr.(pm.Lister); !ok {
 					return fmt.Errorf("package manager %q does not support listing installed packages", mgr.Name())

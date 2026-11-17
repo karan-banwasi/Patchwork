@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
-	"github.com/karan-banwasi/patchwork/internal/pm"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -50,15 +48,6 @@ func trustedChocoPath() (string, error) {
 	}
 
 	return "", errors.New("trusted choco.exe not found in HKLM ChocolateyInstall or ProgramData; refusing to elevate")
-}
-
-// formatElevatedArgs quotes arguments using Windows CommandLineToArgvW rules.
-func formatElevatedArgs(args []string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = pm.EscapeWindowsArg(a)
-	}
-	return strings.Join(quoted, " ")
 }
 
 // runElevated executes the given executable and arguments in an elevated UAC console window

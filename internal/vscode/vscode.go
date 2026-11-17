@@ -73,6 +73,7 @@ func (v *VSCodeManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
 
 func (v *VSCodeManager) SetOffline(offline bool) {
 	v.offline = offline
+	httputil.SetClientOffline(v.client, offline)
 }
 
 func (v *VSCodeManager) RequiresNetwork() bool {
@@ -243,7 +244,7 @@ func fetchMarketplaceLatestVersion(ctx context.Context, client *http.Client, ext
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json;api-version=3.0-preview.1")
-	req.Header.Set("User-Agent", "Patchwork-CLI")
+	req.Header.Set("User-Agent", httputil.DefaultUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {

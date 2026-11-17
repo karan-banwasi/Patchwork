@@ -61,11 +61,11 @@ func newHistoryCmd() *cobra.Command {
 			var mgrFilter string
 			if opts.manager != "" {
 				registry := getDefaultRegistry()
-				if mgr, exists := registry.GetManager(opts.manager); exists {
-					mgrFilter = mgr.Name()
-				} else {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
+				mgr, err := resolveManager(cmd.Context(), registry, opts.manager, false, false)
+				if err != nil {
+					return err
 				}
+				mgrFilter = mgr.Name()
 			}
 
 			entries, err := history.LoadAll()
@@ -204,6 +204,7 @@ func formatVersionTransition(from, to string) string {
 
 func encodeIndentedJSON(out io.Writer, v any) error {
 	enc := json.NewEncoder(out)
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

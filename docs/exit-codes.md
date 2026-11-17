@@ -12,8 +12,8 @@ Exit codes are defined in `internal/exitcodes/exitcodes.go`.
 | :---: | :--- | :--- | :--- |
 | `0` | `ExitSuccess` | Success | - `pw check` completed successfully.<br>- All requested package upgrades completed successfully.<br>- `pw upgrade --dry-run` completed.<br>- Package pinned or unpinned successfully.<br>- `pw doctor` or `pw cleanup` completed. |
 | `1` | `ExitGeneralError` | Operational / Configuration Error | - Unknown flags or invalid command-line syntax.<br>- Malformed or corrupt `config.json`.<br>- Non-existent package manager passed to `-m`.<br>- All package managers failed during query or network failure.<br>- Non-interactive environment without `--all` or package IDs.<br>- Cryptographic attestation verification failure during `pw self-update`. |
-| `2` | `ExitUpgradeFailure` | Upgrade Failure | - `pw upgrade` executed, but **one or more** targeted packages failed to install or upgrade.<br>- Underlying package manager exited with an error code for a package. |
-| `3` | `ExitCanceled` | Canceled / Interrupted | - User pressed `Ctrl+C` (SIGINT) to abort the operation.<br>- User canceled interactive selection (submitted empty selection or typed `none`).<br>- Context deadline was exceeded / canceled. |
+| `2` | `ExitUpgradeFailure` | Upgrade Failure | - `pw upgrade`, `pw rollback`, or `pw import` executed, but **one or more** targeted packages failed to install, upgrade, or roll back.<br>- Underlying package manager exited with an error code for a package. |
+| `3` | `ExitCanceled` | Canceled / Interrupted | - User pressed `Ctrl+C` (SIGINT) to abort the operation.<br>- User canceled interactive selection (pressed `Esc`/`q`/`Ctrl+C` or confirmed with no packages selected).<br>- Context deadline was exceeded / canceled. |
 
 ---
 

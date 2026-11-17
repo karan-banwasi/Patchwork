@@ -149,12 +149,10 @@ func (c *ChocoManager) UpgradePackagesDetailed(ctx context.Context, ids []string
 	args = append(args, "-y", "--no-progress")
 
 	runner := c.runner
-	_, isExec := runner.(pm.ExecRunner)
-	_, isExecPtr := runner.(*pm.ExecRunner)
-	isProductionRunner := runner == nil || isExec || isExecPtr
+	isProd := pm.IsExecRunner(runner)
 
 	var exe string
-	if isProductionRunner && !isElevated() {
+	if isProd && !isElevated() {
 		var err error
 		exe, err = trustedChocoPath()
 		if err != nil {
@@ -178,7 +176,7 @@ func (c *ChocoManager) UpgradePackagesDetailed(ctx context.Context, ids []string
 	var err error
 	exe, err = chocoPath()
 	if err != nil {
-		if !isProductionRunner {
+		if !isProd {
 			exe = "choco"
 		} else {
 			return nil, err
@@ -230,21 +228,20 @@ func (c *ChocoManager) UpgradePackages(ctx context.Context, ids []string) error 
 	return nil
 }
 
-// UpgradePackage is a package-level helper for convenience.
-func UpgradePackage(ctx context.Context, id string) error {
-	return NewChocoManager().UpgradePackage(ctx, id)
+// formatElevatedArgs quotes arguments using Windows CommandLineToArgvW rules.
+func formatElevatedArgs(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = pm.EscapeWindowsArg(a)
+	}
+	return strings.Join(quoted, " ")
 }
 
 // IsProductionRunner reports whether the runner is a production runner (nil or ExecRunner).
 func IsProductionRunner(r pm.Runner) bool {
-	if r == nil {
-		return true
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return isExec || isExecPtr
+	return pm.IsExecRunner(r)
 }
 
 func isProductionRunner(r pm.Runner) bool {
-	return IsProductionRunner(r)
+	return pm.IsExecRunner(r)
 }

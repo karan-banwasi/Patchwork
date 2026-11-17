@@ -107,7 +107,7 @@ func (z *ZypperManager) InstallPackage(ctx context.Context, id, version string) 
 	if version != "" {
 		target = id + "=" + version
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"--non-interactive", "install", target})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"--non-interactive", "install", target})
 	if err := runner.Run(ctx, runExe, runArgs, z.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("zypper install failed for %s: %w", id, err)
 	}

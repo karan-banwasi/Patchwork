@@ -216,10 +216,6 @@ func (r *Registry) ManagerTimeout(mgr Manager) time.Duration {
 	return DefaultFetchTimeout
 }
 
-func (r *Registry) managerTimeout(mgr Manager) time.Duration {
-	return r.ManagerTimeout(mgr)
-}
-
 // FetchUpdates queries package managers for available updates, optionally filtering by manager names.
 // If filter is empty, all active managers on the system are queried concurrently.
 // If filter is provided, only specified managers are queried; unknown or unavailable managers return an error.

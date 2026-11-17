@@ -213,7 +213,7 @@ jobs:
               -e "s|releases/tag/v.*|releases/tag/$NEW_TAG|" \
               winget/KaranBanwasi.Patchwork.locale.en-US.yaml > KaranBanwasi.Patchwork.locale.en-US.yaml
           {
-            echo "# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json"
+            echo "# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json"
             echo ""
             echo "PackageIdentifier: KaranBanwasi.Patchwork"
             echo "PackageVersion: $NEW_VERSION"
@@ -228,7 +228,7 @@ jobs:
             echo "    InstallerUrl: https://github.com/$GH_REPO/releases/download/$NEW_TAG/pw-arm64.exe"
             echo "    InstallerSha256: $SHA_ARM64"
             echo "ManifestType: installer"
-            echo "ManifestVersion: 1.6.0"
+            echo "ManifestVersion: 1.12.0"
           } > KaranBanwasi.Patchwork.installer.yaml
           
           # Create a GitHub Release as a draft with the compiled binaries and Winget manifests attached

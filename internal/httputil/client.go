@@ -1,6 +1,8 @@
 package httputil
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -181,9 +184,9 @@ func (t *RetryTransport) shouldRetry(req *http.Request, resp *http.Response, err
 		return false
 	}
 
-	// Only retry idempotent HTTP methods
+	// Only retry idempotent HTTP methods, or POST requests with a rewindable GetBody.
 	method := strings.ToUpper(req.Method)
-	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions && !(method == http.MethodPost && req.GetBody != nil) {
 		return false
 	}
 
@@ -253,4 +256,43 @@ func (t *RetryTransport) calculateDelay(attempt int, resp *http.Response) time.D
 		return t.MaxDelay
 	}
 	return delay
+}
+
+// SetClientOffline propagates offline mode to a client's RetryTransport when present.
+func SetClientOffline(client *http.Client, offline bool) {
+	if client == nil {
+		return
+	}
+	if rt, ok := client.Transport.(*RetryTransport); ok {
+		rt.SetOffline(offline)
+	}
+}
+
+type pypiResponse struct {
+	Info struct {
+		Version string `json:"version"`
+	} `json:"info"`
+}
+
+// FetchPyPILatestVersion queries PyPI's JSON API for the latest released version of pkgName.
+func FetchPyPILatestVersion(ctx context.Context, client *http.Client, pkgName string) (string, error) {
+	endpoint := fmt.Sprintf("https://pypi.org/pypi/%s/json", url.PathEscape(pkgName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", DefaultUserAgent)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var data pypiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("invalid json: %w", err)
+	}
+	return strings.TrimSpace(data.Info.Version), nil
 }

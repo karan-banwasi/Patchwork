@@ -553,3 +553,52 @@ func TestConfig_DefaultsChannelSaveLoad(t *testing.T) {
 		t.Errorf("expected empty defaults block to be omitted, got: %s", string(raw))
 	}
 }
+
+func TestConfig_DisabledManagersAliasesAndWhitespacePaths(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Set("disabled_managers", "psresourceget,uv-tool,dotnet-tool"); err != nil {
+		t.Fatalf("expected valid aliases to be accepted for disabled_managers, got: %v", err)
+	}
+	val, _ := cfg.Get("disabled_managers")
+	list, ok := val.([]string)
+	if !ok || len(list) != 3 || list[0] != "psresourceget" || list[1] != "uv-tool" || list[2] != "dotnet-tool" {
+		t.Errorf("unexpected disabled_managers list: %#v", val)
+	}
+
+	// Whitespace-only env vars should fall back to default paths rather than returning whitespace.
+	t.Setenv("PATCHWORK_CONFIG", "   ")
+	cfgPath, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath failed: %v", err)
+	}
+	if strings.TrimSpace(cfgPath) == "" || cfgPath == "   " {
+		t.Errorf("expected ConfigPath to ignore whitespace-only PATCHWORK_CONFIG, got %q", cfgPath)
+	}
+
+	t.Setenv("PATCHWORK_CACHE", "   ")
+	cachePath := CachePath()
+	if strings.TrimSpace(cachePath) == "" || cachePath == "   " {
+		t.Errorf("expected CachePath to ignore whitespace-only PATCHWORK_CACHE, got %q", cachePath)
+	}
+}
+
+func TestConfig_MatchPin_ExpiredFollowedByActive(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-1 * time.Hour)
+	future := now.Add(24 * time.Hour)
+
+	cfg := &Config{}
+	cfg.AddPinEntry(PinEntry{ID: "git", ExpiresAt: &expired})
+	cfg.AddPinEntry(PinEntry{Manager: "winget", ID: "git", ExpiresAt: &future})
+
+	pin, violated := cfg.MatchPin("winget", "git", "Git", "2.45.0")
+	if !violated || pin == nil || pin.Manager != "winget" {
+		t.Errorf("expected active winget:git pin to match after expired global git pin, got pin=%+v violated=%v", pin, violated)
+	}
+
+	// Different manager only matches the expired global pin
+	pin2, violated2 := cfg.MatchPin("scoop", "git", "Git", "2.45.0")
+	if violated2 || pin2 == nil || !pin2.IsExpired() {
+		t.Errorf("expected expired global pin with violated=false for scoop, got pin=%+v violated=%v", pin2, violated2)
+	}
+}

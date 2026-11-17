@@ -279,7 +279,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 // ConfigPath returns the path to the Patchwork config file.
 func ConfigPath() (string, error) {
-	if custom := os.Getenv("PATCHWORK_CONFIG"); custom != "" {
+	if custom := strings.TrimSpace(os.Getenv("PATCHWORK_CONFIG")); custom != "" {
 		return custom, nil
 	}
 	dir, err := os.UserConfigDir()
@@ -324,10 +324,17 @@ func (c *Config) Save() error {
 	return c.SaveTo(path)
 }
 
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
+// WriteAtomic writes data to path atomically via a temporary file in the same directory.
+func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
+	if dir != "" && dir != "." {
+		dirPerm := os.FileMode(0755)
+		if perm <= 0600 {
+			dirPerm = 0700
+		}
+		if err := os.MkdirAll(dir, dirPerm); err != nil {
+			return err
+		}
 	}
 	tmp, err := os.CreateTemp(dir, "config-*.tmp")
 	if err != nil {
@@ -388,7 +395,7 @@ func (c *Config) SaveTo(path string) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, data, 0600)
+	return WriteAtomic(path, data, 0600)
 }
 
 func normalizePinEntry(raw string) string {
@@ -437,11 +444,6 @@ func (c *Config) AddPinEntry(entry PinEntry) bool {
 	return true
 }
 
-// AddPin adds a package ID to the pinned list. Alias for Pin.
-func (c *Config) AddPin(id string) bool {
-	return c.Pin(id)
-}
-
 // Pin adds a package ID (optionally scoped as "manager:id") to the pinned list if not already present.
 // Returns true if newly pinned.
 func (c *Config) Pin(id string) bool {
@@ -471,11 +473,6 @@ func (c *Config) Pin(id string) bool {
 	c.Pins = append(c.Pins, entry)
 	c.syncPackagesFromPins()
 	return true
-}
-
-// RemovePin removes a package ID from the pinned list. Alias for Unpin.
-func (c *Config) RemovePin(id string) bool {
-	return c.Unpin(id)
 }
 
 // Unpin removes a package ID (or "manager:id") from the pinned list. Returns true if it was present and removed.
@@ -517,13 +514,15 @@ func (c *Config) Unpin(id string) bool {
 // MatchPin evaluates whether the specified package matches any pin in configuration,
 // checking manager scoping, expiration, and version constraints.
 // Returns the matched PinEntry (if any) and whether the pin is active and violated by targetVersion.
-func (c *Config) MatchPin(manager, id, name, targetVersion string) (*PinEntry, bool) {
+func (c *Config) MatchPin(manager, id, _ string, targetVersion string) (*PinEntry, bool) {
 	if c == nil || id == "" {
 		return nil, false
 	}
 	c.syncPinsFromPackages()
 	mgrNorm := strings.ToLower(strings.TrimSpace(manager))
 	idNorm := strings.TrimSpace(id)
+
+	var firstExpired *PinEntry
 
 	for i := range c.Pins {
 		pin := &c.Pins[i]
@@ -547,7 +546,10 @@ func (c *Config) MatchPin(manager, id, name, targetVersion string) (*PinEntry, b
 
 		if matched {
 			if pin.IsExpired() {
-				return pin, false
+				if firstExpired == nil {
+					firstExpired = pin
+				}
+				continue
 			}
 			if pin.Version != "" {
 				if targetVersion == "" {
@@ -565,7 +567,7 @@ func (c *Config) MatchPin(manager, id, name, targetVersion string) (*PinEntry, b
 			return pin, true
 		}
 	}
-	return nil, false
+	return firstExpired, false
 }
 
 // IsPinned returns true if an unscoped package ID matches the pinned list.
@@ -799,10 +801,10 @@ func (c *Config) Set(key string, val any) error {
 			"winget": true,
 			"scoop":  true,
 			"choco":  true, "chocolatey": true,
-			"psresource": true, "powershell": true,
+			"psresource": true, "powershell": true, "psresourceget": true,
 			"npm":    true,
-			"dotnet": true,
-			"uv":     true, "python": true,
+			"dotnet": true, "dotnet-tool": true,
+			"uv": true, "uv-tool": true, "python": true,
 			"cargo": true, "rust": true,
 
 			// Linux-native
@@ -877,7 +879,7 @@ type UpdateCache struct {
 
 // CachePath returns the path to the user-scoped update cache file.
 func CachePath() string {
-	if custom := os.Getenv("PATCHWORK_CACHE"); custom != "" {
+	if custom := strings.TrimSpace(os.Getenv("PATCHWORK_CACHE")); custom != "" {
 		return custom
 	}
 	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
@@ -896,7 +898,7 @@ func SaveUpdateCache(updates []pm.PackageUpdate) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(CachePath(), data, 0600)
+	return WriteAtomic(CachePath(), data, 0600)
 }
 
 // LoadUpdateCache reads cached package updates if the cache file exists and is newer than maxAge.

@@ -17,19 +17,10 @@ var (
 	_ pm.Installer = (*ScoopManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (s *ScoopManager) resolveExe() (string, error) {
 	exe, err := scoopPath()
 	if err != nil {
-		if isMockRunner(s.runner) {
+		if !pm.IsExecRunner(s.runner) {
 			return "scoop", nil
 		}
 		return "", err

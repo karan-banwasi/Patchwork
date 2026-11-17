@@ -11,12 +11,16 @@ import (
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
 )
 
 var (
 	_ pm.Manager             = (*PSResourceManager)(nil)
+	_ pm.Locator             = (*PSResourceManager)(nil)
 	_ pm.OfflineConfigurable = (*PSResourceManager)(nil)
 	_ pm.NetworkDependent    = (*PSResourceManager)(nil)
+	_ pm.OptionsConfigurable = (*PSResourceManager)(nil)
+	_ pm.IOConfigurable      = (*PSResourceManager)(nil)
 )
 
 // PSResourceManager implements the pm.Manager interface for PowerShell modules via Microsoft.PowerShell.PSResourceGet.
@@ -109,7 +113,7 @@ type psResourceUpdateJSON struct {
 	Source    string `json:"Source"`
 }
 
-const checkPSResourceScript = `
+const psResourceInstalledPreamble = `
 $ErrorActionPreference = 'Stop'
 try {
     if (-not (Get-Command Get-InstalledPSResource -ErrorAction SilentlyContinue)) { exit 0 }
@@ -123,7 +127,9 @@ try {
         }
     }
     if (-not $rawInstalled) { exit 0 }
-    $installed = $rawInstalled | Group-Object Name | ForEach-Object { $_.Group | Sort-Object {[version]($_.Version -replace '-.*$','')} -Descending | Select-Object -First 1 }
+    $installed = $rawInstalled | Group-Object Name | ForEach-Object { $_.Group | Sort-Object {[version]($_.Version -replace '-.*$','')} -Descending | Select-Object -First 1 }`
+
+const checkPSResourceScript = psResourceInstalledPreamble + `
     if (-not $installed) { exit 0 }
     $names = [string[]]($installed | Select-Object -ExpandProperty Name)
     if (-not $names -or $names.Count -eq 0) { exit 0 }
@@ -206,7 +212,7 @@ func parsePSResourceJSON(output string) ([]pm.PackageUpdate, error) {
 
 	var updates []pm.PackageUpdate
 	for _, e := range entries {
-		if e.Name != "" && e.Version != "" && e.Available != "" && e.Version != e.Available && pm.ValidatePSResourceID(e.Name) == nil {
+		if e.Name != "" && e.Version != "" && e.Available != "" && version.IsUpgrade("psresource", e.Version, e.Available) && pm.ValidatePSResourceID(e.Name) == nil {
 			src := e.Source
 			if src == "" {
 				src = "PSGallery"

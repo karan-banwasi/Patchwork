@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -159,6 +160,55 @@ func TestClient_NonIdempotentNotRetried(t *testing.T) {
 
 	if attempts != 1 {
 		t.Errorf("expected non-idempotent POST to only be attempted once, got %d", attempts)
+	}
+}
+
+func TestClient_PostWithGetBodyRetried(t *testing.T) {
+	var attempts int32
+	var seenBodies []string
+	mockRT := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		bodyBytes, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		seenBodies = append(seenBodies, string(bodyBytes))
+		curr := atomic.AddInt32(&attempts, 1)
+		if curr == 1 {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("unavailable")),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("ok")),
+		}, nil
+	})
+
+	client := NewClient(
+		WithTransport(mockRT),
+		WithMaxRetries(2),
+		WithBaseDelay(1*time.Millisecond),
+	)
+
+	payload := `{"query":"test"}`
+	req, err := http.NewRequest(http.MethodPost, "http://example.com/query", bytes.NewReader([]byte(payload)))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts for rewindable POST, got %d", attempts)
+	}
+	if len(seenBodies) != 2 || seenBodies[0] != payload || seenBodies[1] != payload {
+		t.Errorf("expected request body to be rewound on retry, got %v", seenBodies)
 	}
 }
 

@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
+	"time"
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
@@ -16,16 +19,59 @@ var version = "dev" // overridden by -ldflags
 
 var registryOverride *pm.Registry
 
-// getDefaultRegistry initializes the default registry of supported package managers for the current OS.
-func getDefaultRegistry() *pm.Registry {
+// getDefaultRegistryAndConfig loads user config once and returns the active package manager registry and loaded config.
+func getDefaultRegistryAndConfig() (*pm.Registry, *config.Config) {
+	cfg, _ := config.Load()
 	if registryOverride != nil {
-		return registryOverride
+		return registryOverride, cfg
 	}
 	reg := pm.NewRegistry(defaultManagers()...)
-	if cfg, err := config.Load(); err == nil && cfg != nil && len(cfg.DisabledManagers) > 0 {
+	if cfg != nil && len(cfg.DisabledManagers) > 0 {
 		reg.SetDisabled(cfg.DisabledManagers)
 	}
+	return reg, cfg
+}
+
+// getDefaultRegistry initializes the default registry of supported package managers for the current OS.
+func getDefaultRegistry() *pm.Registry {
+	reg, _ := getDefaultRegistryAndConfig()
 	return reg
+}
+
+// resolveManager looks up a package manager by name or alias and optionally validates enabled/availability state.
+func resolveManager(ctx context.Context, reg *pm.Registry, name string, checkDisabled, checkAvailable bool) (pm.Manager, error) {
+	mgr, exists := reg.GetManager(name)
+	if !exists {
+		return nil, fmt.Errorf("unknown package manager %q (supported: %s)", name, strings.Join(reg.ManagerNames(), ", "))
+	}
+	if checkDisabled && reg.IsDisabled(mgr.Name()) {
+		return nil, fmt.Errorf("package manager %q is disabled in configuration", name)
+	}
+	if checkAvailable && !mgr.IsAvailable(ctx) {
+		return nil, fmt.Errorf("package manager %q is not installed or available on this system", name)
+	}
+	return mgr, nil
+}
+
+// hydrateCommonDefaults populates unset command flags from config.Defaults.
+func hydrateCommonDefaults(cmd *cobra.Command, cfg *config.Config, timeout *time.Duration, noRefresh *bool, level *string, exclude *[]string) {
+	if cfg == nil {
+		return
+	}
+	if timeout != nil && !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
+		if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
+			*timeout = d
+		}
+	}
+	if noRefresh != nil && !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
+		*noRefresh = *cfg.Defaults.NoRefresh
+	}
+	if level != nil && !cmd.Flags().Changed("level") && cfg.Defaults.Level != "" {
+		*level = cfg.Defaults.Level
+	}
+	if exclude != nil && !cmd.Flags().Changed("exclude") && len(cfg.Defaults.Exclude) > 0 {
+		*exclude = append([]string(nil), cfg.Defaults.Exclude...)
+	}
 }
 
 // configureRegistryIO attaches the command's standard streams to all managers in the registry.

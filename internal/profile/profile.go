@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -363,36 +362,5 @@ func parseProfileExpiry(s string) (*time.Time, error) {
 
 // WriteAtomic writes data to path atomically via a temporary file in the same directory.
 func WriteAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-	tmp, err := os.CreateTemp(dir, ".patchwork-profile-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	closed := false
-	defer func() {
-		if !closed {
-			_ = tmp.Close()
-		}
-		_ = os.Remove(tmpName)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	closed = true
-
-	_ = os.Chmod(tmpName, perm)
-	return os.Rename(tmpName, path)
+	return config.WriteAtomic(path, data, perm)
 }

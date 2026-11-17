@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/version"
@@ -19,6 +20,7 @@ var (
 	_ pm.Manager        = (*AsdfManager)(nil)
 	_ pm.Locator        = (*AsdfManager)(nil)
 	_ pm.Refresher      = (*AsdfManager)(nil)
+	_ pm.WarningFetcher = (*AsdfManager)(nil)
 	_ pm.IOConfigurable = (*AsdfManager)(nil)
 )
 
@@ -184,10 +186,10 @@ func parseAsdfCurrent(output string) ([]pm.PackageUpdate, error) {
 	return pkgs, nil
 }
 
-func (a *AsdfManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+func (a *AsdfManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := a.Path()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	runner := a.runner
 	if runner == nil {
@@ -198,31 +200,68 @@ func (a *AsdfManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpda
 	if err := runner.Run(ctx, exe, []string{"current"}, nil, &stdout, &stderr); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
 		if errMsg != "" {
-			return nil, fmt.Errorf("asdf current failed: %w (%s)", err, errMsg)
+			return nil, nil, fmt.Errorf("asdf current failed: %w (%s)", err, errMsg)
 		}
-		return nil, fmt.Errorf("asdf current failed: %w", err)
+		return nil, nil, fmt.Errorf("asdf current failed: %w", err)
 	}
 
 	installed, err := parseAsdfCurrent(stdout.String())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if len(installed) == 0 {
+		return []pm.PackageUpdate{}, nil, nil
 	}
 
-	var updates []pm.PackageUpdate
+	var (
+		updates    []pm.PackageUpdate
+		lookupErrs []error
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, 4)
+	)
+
 	for _, pkg := range installed {
-		var outBuf bytes.Buffer
-		if err := runner.Run(ctx, exe, []string{"latest", pkg.Id}, nil, &outBuf, io.Discard); err == nil {
-			latest := strings.TrimSpace(outBuf.String())
-			if latest != "" && version.IsUpgrade("asdf", pkg.Version, latest) {
-				pkg.AvailableVersion = latest
-				updates = append(updates, pkg)
+		wg.Add(1)
+		go func(p pm.PackageUpdate) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			var outBuf, errBuf bytes.Buffer
+			if err := runner.Run(ctx, exe, []string{"latest", p.Id}, nil, &outBuf, &errBuf); err != nil {
+				mu.Lock()
+				lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", p.Id, err))
+				mu.Unlock()
+				return
 			}
-		}
+			latest := strings.TrimSpace(outBuf.String())
+			if latest != "" && version.IsUpgrade("asdf", p.Version, latest) {
+				p.AvailableVersion = latest
+				mu.Lock()
+				updates = append(updates, p)
+				mu.Unlock()
+			}
+		}(pkg)
 	}
+	wg.Wait()
 
 	sort.Slice(updates, func(i, j int) bool {
 		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
 
-	return updates, nil
+	if len(lookupErrs) > 0 {
+		if len(lookupErrs) == len(installed) {
+			return nil, nil, fmt.Errorf("failed to check any asdf tools (0 of %d checked): %v", len(installed), lookupErrs[0])
+		}
+		warning := fmt.Errorf("[%s] %d of %d tools could not be checked; lookup error: %v", a.Name(), len(lookupErrs), len(installed), lookupErrs[0])
+		return updates, []error{warning}, nil
+	}
+
+	return updates, nil, nil
+}
+
+func (a *AsdfManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	updates, _, err := a.GetAvailableUpdatesWithWarnings(ctx)
+	return updates, err
 }

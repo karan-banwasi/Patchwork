@@ -104,3 +104,20 @@ func TestPacmanManager_GetAvailableUpdates_ExitCode2(t *testing.T) {
 		t.Errorf("expected 0 updates, got: %+v", updates)
 	}
 }
+
+func TestPacmanManager_GetAvailableUpdates_RejectsAmbiguousErrorDigits(t *testing.T) {
+	for _, errMsg := range []string{"exit status 127", "signal 11", "exit status 12", "timeout after 1s"} {
+		t.Run(errMsg, func(t *testing.T) {
+			mgr := NewPacmanManager()
+			mgr.exePath = "/usr/bin/pacman"
+			mgr.runner = &mockRunner{
+				runFunc: func(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+					return errors.New(errMsg)
+				},
+			}
+			if _, err := mgr.GetAvailableUpdates(context.Background()); err == nil {
+				t.Errorf("expected error for %q, got nil", errMsg)
+			}
+		})
+	}
+}

@@ -139,6 +139,30 @@ func (m *Manager) ShouldDefer(id string) bool {
 }
 ```
 
+### `pm.Lister`
+If the manager can list currently installed packages (used by `pw export` and `--skip-existing` in `pw import`):
+```go
+func (m *Manager) ListInstalled(ctx context.Context) ([]pm.InstalledPackage, error) {
+	// Return installed packages via m.runner
+}
+```
+
+### `pm.Installer`
+If the manager supports installing packages by ID and optional version (used by `pw import`):
+```go
+func (m *Manager) InstallPackage(ctx context.Context, id, version string) error {
+	// Validate id and run install command via m.runner
+}
+```
+
+### `pm.Rollbackable`
+If the manager can restore a package to a specific previous version (used by `pw rollback`):
+```go
+func (m *Manager) RollbackPackage(ctx context.Context, id, targetVersion string) error {
+	// Validate id and install/downgrade to targetVersion via m.runner
+}
+```
+
 ### `pm.TimeoutProvider`
 If querying this manager's updates typically requires a longer or shorter timeout than the default 2 minutes:
 ```go
@@ -238,9 +262,10 @@ go test ./internal/<manager> -update
 ## Step 6: Platform Gating and Registration
 
 Register your new manager in the CLI registry:
+- **Cross-platform managers (Windows, macOS, Linux, BSD/other)**: Register in `cmd/registry_common.go` inside `commonManagers()` (shared across platform builds).
 - **Windows-only managers**: Register in `cmd/registry_windows.go` inside `defaultManagers()`.
-- **Unix / Cross-Platform managers**: Register in `cmd/registry_unix.go` inside `defaultManagers()`.
-- **Platform-Specific (e.g., Linux-only)**: Use `//go:build linux` files or conditionals based on `runtime.GOOS`.
+- **macOS-only or Darwin+Linux managers (e.g. `brew`, `mas`)**: Register in `cmd/registry_darwin.go` (`mas`, `brew`) and `cmd/registry_linux.go` (`brew`, APT, DNF, Pacman, Zypper, Flatpak, Snap).
+- **Other Unix platforms**: Register platform-appropriate managers in `cmd/registry_other.go` (using `//go:build !windows && !darwin && !linux`).
 
 ---
 

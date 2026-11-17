@@ -17,19 +17,10 @@ var (
 	_ pm.Installer = (*NpmManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (n *NpmManager) resolveExe() (string, error) {
 	exe, err := npmPath()
 	if err != nil {
-		if isMockRunner(n.runner) {
+		if !pm.IsExecRunner(n.runner) {
 			return "npm", nil
 		}
 		return "", err

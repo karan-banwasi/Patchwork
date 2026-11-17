@@ -10,7 +10,6 @@ import (
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 func newConfigCmd() *cobra.Command {
@@ -135,8 +134,7 @@ func newConfigEditCmd() *cobra.Command {
 				}
 			}
 
-			stdinFile, ok := cmd.InOrStdin().(*os.File)
-			if !ok || !term.IsTerminal(int(stdinFile.Fd())) {
+			if !isInteractive(cmd.InOrStdin()) {
 				return fmt.Errorf("cannot open editor in non-interactive environment (config file is at: %s)", path)
 			}
 

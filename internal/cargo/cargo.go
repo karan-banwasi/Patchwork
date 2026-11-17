@@ -21,9 +21,11 @@ import (
 
 var (
 	_ pm.Manager             = (*CargoManager)(nil)
+	_ pm.Locator             = (*CargoManager)(nil)
 	_ pm.WarningFetcher      = (*CargoManager)(nil)
 	_ pm.OfflineConfigurable = (*CargoManager)(nil)
 	_ pm.NetworkDependent    = (*CargoManager)(nil)
+	_ pm.IOConfigurable      = (*CargoManager)(nil)
 )
 
 // CargoManager implements the pm.Manager interface for Rust global binaries installed via `cargo install`.
@@ -47,6 +49,7 @@ func NewCargoManager() *CargoManager {
 
 func (c *CargoManager) SetOffline(offline bool) {
 	c.offline = offline
+	httputil.SetClientOffline(c.client, offline)
 }
 
 func (c *CargoManager) RequiresNetwork() bool {
@@ -153,7 +156,7 @@ func fetchCratesIOLatestVersion(ctx context.Context, client *http.Client, crateN
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Patchwork-CLI (https://github.com/karan-banwasi/Patchwork)")
+	req.Header.Set("User-Agent", httputil.DefaultUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

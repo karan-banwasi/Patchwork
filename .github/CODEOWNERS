@@ -18,4 +18,8 @@
 
 # Packaging and distribution scripts
 /install.ps1 @karan-banwasi
+/install.sh @karan-banwasi
+/.goreleaser.yaml @karan-banwasi
+/Formula/ @karan-banwasi
+/bucket/ @karan-banwasi
 /winget/ @karan-banwasi

@@ -199,9 +199,19 @@ pw check -m dotnet
 pw check --include-pinned
 ```
 
-**Skip repository/bucket network refresh before checking (offline mode):**
+**Skip repository/bucket network refresh or disable all network access (`--no-refresh`, `--offline`):**
 ```bash
+# Check using cached local indexes without refreshing remote repositories
 pw check --no-refresh
+
+# Disable network access completely and check only local state
+pw check --offline
+```
+
+**Filter by exclude glob patterns, semver bump level, or preview changelog links:**
+```bash
+pw check --exclude "python*,*dev*" --level minor
+pw check --changelog
 ```
 
 **Set a custom per-manager query timeout:**
@@ -230,7 +240,7 @@ Every upgrade run concludes with an **Upgrade Summary Table** displaying each pa
 ```bash
 pw upgrade
 ```
-> **Interactive Controls:** Enter comma-separated index numbers or ranges (e.g. `1, 3-5`), type `all` to select every package, or press `Enter` (or type `none`) to cancel safely.
+> **Interactive Controls:** Use `↑`/`↓` (or `j`/`k`) to move, `Space` to toggle selection, `→` (`a`) to select all, `←` (`n`) to select none, `Enter` to confirm, and `Esc`/`q`/`Ctrl+C` to cancel safely.
 
 **Interactive upgrade grouped manager-by-manager:**
 ```bash
@@ -271,6 +281,18 @@ pw upgrade Microsoft.PowerShell --dry-run
 pw upgrade --dry-run
 ```
 
+**Filter policies, preview changelogs, and control execution concurrency:**
+```bash
+# Exclude packages matching globs or cap updates at minor semver bumps
+pw upgrade --all --exclude "python*,*dev*" --level minor
+
+# Show release/package changelog URLs and confirm non-interactively
+pw upgrade --all --changelog --yes
+
+# Upgrade across package managers concurrently (default sequential = 1; 0 = all managers)
+pw upgrade --all -j 4
+```
+
 **Upgrade pinned packages or customize agreement prompts:**
 ```bash
 # Upgrade packages even if pinned in your configuration:
@@ -296,11 +318,12 @@ If a package has a broken installer or you want to hold back its version, pin it
 pw pin Microsoft.VisualStudioCode
 pw pin Git.Git nodejs
 
-# Pin a package scoped to a specific package manager only:
+# Pin a package scoped to a specific package manager with constraints, reason, and expiry:
+pw pin npm:typescript --version "<6.0.0" --reason "Await plugin upgrade" --expires 30d
 pw pin winget:Git.Git
 pw pin scoop:git
 
-# List all currently pinned packages
+# List all currently pinned packages (supports --json)
 pw pinned
 
 # Unpin one or more packages so updates are shown again
@@ -366,7 +389,7 @@ pw status
 
 ### 6. Cache & Old Version Cleanup (`pw cleanup` / `pw clean`)
 
-Remove old package versions and prune download caches across installed managers (`brew`, `scoop`, `npm`, `uv`), as well as Patchwork's temporary completion cache:
+Remove old package versions and prune download caches across installed cleanup-capable managers (`brew`, `apt`, `dnf`, `pacman`, `zypper`, `flatpak`, `scoop`, `npm`, `pnpm`, `bun`, `uv`, `gem`, `mise`), as well as Patchwork's temporary completion cache:
 
 ```bash
 # Clean up all supported managers
@@ -387,15 +410,83 @@ The short-lived update check completion cache is saved at:
 - **Linux**: `~/.cache/Patchwork/updates-cache.json` (or `$XDG_CACHE_HOME/Patchwork/updates-cache.json`)
 - Override: `PATCHWORK_CACHE` environment variable
 
+---
+
+### 7. Configuration Management (`pw config`)
+
+Inspect and update default settings, disabled managers, and pins persistently:
+
+```bash
+pw config list
+pw config get accept_agreements
+pw config set accept_agreements false
+pw config set disabled_managers scoop,choco
+pw config edit
+```
 
 ---
 
-### 7. Version Information (`pw version`)
+### 8. Scheduled Background Checks & Notifications (`pw schedule`)
+
+Register native user-level scheduled background checks (Windows Task Scheduler, macOS `launchd`, Linux `systemd --user`/`crontab`) with desktop notifications and status-bar output:
+
+```bash
+# Enable periodic background checks (e.g. hourly, daily, weekly, or 6h)
+pw schedule enable --interval 6h --notify
+
+# Check status or emit compact status-bar text (--bar) / JSON (--json)
+pw schedule status
+pw schedule status --bar
+
+# Run a scheduled check on demand or disable background checks
+pw schedule run
+pw schedule disable
+```
+
+---
+
+### 9. Upgrade History & Rollback (`pw history`, `pw rollback`)
+
+Inspect logged upgrade runs and roll back packages on rollback-capable managers:
+
+```bash
+# View recent upgrade runs (supports --manager, --limit, --json, --clear)
+pw history
+pw history --limit 10 --json
+
+# Roll back packages from the last run, a specific run ID, or to an explicit version
+pw rollback --last --dry-run
+pw rollback --run <run-id>
+pw rollback <package-id> -m <manager> --to <version>
+```
+
+---
+
+### 10. Machine Profile Export & Import (`pw export`, `pw import`)
+
+Capture installed packages and configured pins to a portable `Patchfile` or JSON profile, and restore them on another machine:
+
+```bash
+# Export a portable Patchfile (or JSON with --json)
+pw export -o Patchfile
+pw export --json --include-versions -o machine-profile.json
+
+# Preview and apply a profile on a target machine
+pw import Patchfile --dry-run
+pw import Patchfile
+```
+
+---
+
+### 11. Version Information & Self-Update Check (`pw version`, `pw self-update --check`)
 
 ```bash
 pw version
 # or
 pw --version
+
+# Check whether a newer Patchwork release is available without modifying the binary
+pw self-update --check
 ```
 
 ## Development
@@ -410,7 +501,7 @@ go generate ./...
 ```
 
 ### Publishing to Windows Package Manager (`winget-pkgs`)
-This repository includes a validated Winget v1.6.0 portable package manifest (`KaranBanwasi.Patchwork`) under `winget/` and automated release generation in `.github/workflows/release.yml`.
+This repository includes a validated Winget v1.12.0 portable package manifest (`KaranBanwasi.Patchwork`) under `winget/` and automated release generation in `.github/workflows/release.yml`.
 
 1. **Generate & Validate Local Manifests**:
    ```powershell

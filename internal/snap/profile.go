@@ -93,7 +93,7 @@ func (s *SnapManager) InstallPackage(ctx context.Context, id, version string) er
 		stderr = io.Discard
 	}
 
-	runExe, runArgs := wrapSudo(exe, []string{"install", id})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"install", id})
 	if err := runner.Run(ctx, runExe, runArgs, s.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("snap install failed for %s: %w", id, err)
 	}

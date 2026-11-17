@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -35,28 +34,12 @@ func newCheckCmd() *cobra.Command {
 		Short: "Check for available updates",
 		Long:  `Iterate through supported package managers and check for available updates without installing them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			registry := getDefaultRegistry()
+			registry, cfg := getDefaultRegistryAndConfig()
 			out := cmd.OutOrStdout()
 			errOut := cmd.ErrOrStderr()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
 
-			cfg, _ := config.Load()
-			if cfg != nil {
-				if !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
-					if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
-						opts.timeout = d
-					}
-				}
-				if !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
-					opts.noRefresh = *cfg.Defaults.NoRefresh
-				}
-				if !cmd.Flags().Changed("level") && cfg.Defaults.Level != "" {
-					opts.level = cfg.Defaults.Level
-				}
-				if !cmd.Flags().Changed("exclude") && len(cfg.Defaults.Exclude) > 0 {
-					opts.exclude = append([]string(nil), cfg.Defaults.Exclude...)
-				}
-			}
+			hydrateCommonDefaults(cmd, cfg, &opts.timeout, &opts.noRefresh, &opts.level, &opts.exclude)
 
 			if _, err := semver.ParseLevel(opts.level); err != nil {
 				return err
@@ -76,12 +59,9 @@ func newCheckCmd() *cobra.Command {
 
 			var filter []string
 			if opts.manager != "" {
-				mgr, exists := registry.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-				}
-				if !mgr.IsAvailable(cmd.Context()) {
-					return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+				mgr, err := resolveManager(cmd.Context(), registry, opts.manager, true, true)
+				if err != nil {
+					return err
 				}
 				filter = append(filter, opts.manager)
 				if !silentStatus {
@@ -152,10 +132,8 @@ func newCheckCmd() *cobra.Command {
 					}
 					outList = append(outList, jp)
 				}
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(jsonOutput{
-					SchemaVersion: "1.0.0",
+				return encodeIndentedJSON(out, jsonOutput{
+					SchemaVersion: upgrade.CurrentSchemaVersion,
 					Updates:       outList,
 					Count:         len(outList),
 					Pinned:        pinnedCount,
@@ -239,9 +217,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.level, "level", "", "Maximum semver bump level to include (patch, minor, major)")
 	cmd.Flags().BoolVar(&opts.changelog, "changelog", false, "Display changelog/release preview URLs for available updates")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
-	_ = cmd.RegisterFlagCompletionFunc("level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"patch", "minor", "major"}, cobra.ShellCompDirectiveNoFileComp
-	})
+	_ = cmd.RegisterFlagCompletionFunc("level", completeLevelNames)
 
 	return cmd
 }

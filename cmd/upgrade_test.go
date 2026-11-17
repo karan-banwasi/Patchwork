@@ -219,7 +219,7 @@ func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
 		{Id: "OpenJS.NodeJS.LTS", Name: "Node.js LTS", ManagerName: "winget"},
 	}
 
-	ordered := orderSelectedPackages(input)
+	ordered := upgrade.OrderTargets(registryOverride, input)
 	expectedOrder := []string{
 		"Git.Git",
 		"OpenJS.NodeJS.LTS",
@@ -237,7 +237,7 @@ func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
 	}
 }
 
-func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
+func TestFilterPins_SkipsPinnedUnlessForced(t *testing.T) {
 	tmpCfg := t.TempDir() + "/config.json"
 	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
 
@@ -252,18 +252,18 @@ func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
 		{Id: "Git.Git", Name: "Git", ManagerName: "scoop"},
 	}
 
-	allowed, skipped, err := splitPinnedTargets(targets, false)
+	allowed, skipped, err := upgrade.FilterPins(targets, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(allowed) != 1 || allowed[0].ManagerName != "scoop" {
 		t.Errorf("expected only scoop Git.Git to be allowed, got: %+v", allowed)
 	}
-	if len(skipped) != 1 || skipped[0].status != "Skipped (pinned)" {
+	if len(skipped) != 1 || skipped[0].Status != upgrade.StatusSkippedPinned {
 		t.Errorf("expected winget Git.Git to be Skipped (pinned), got: %+v", skipped)
 	}
 
-	allowedForced, skippedForced, err := splitPinnedTargets(targets, true)
+	allowedForced, skippedForced, err := upgrade.FilterPins(targets, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
 	}
 }
 
-func TestSplitPinnedTargets_CorruptConfigFailsClosed(t *testing.T) {
+func TestFilterPins_CorruptConfigFailsClosed(t *testing.T) {
 	tmpCfg := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
 
@@ -284,21 +284,36 @@ func TestSplitPinnedTargets_CorruptConfigFailsClosed(t *testing.T) {
 		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
 	}
 
-	_, _, err := splitPinnedTargets(targets, false)
+	_, _, err := upgrade.FilterPins(targets, false)
 	if err == nil {
-		t.Fatalf("expected error from splitPinnedTargets on corrupt config, got nil")
+		t.Fatalf("expected error from FilterPins on corrupt config, got nil")
 	}
 	if !strings.Contains(err.Error(), "cannot verify pinned packages") {
 		t.Errorf("expected fail-closed error message, got: %v", err)
 	}
 
 	// Forced override succeeds
-	allowed, _, err := splitPinnedTargets(targets, true)
+	allowed, _, err := upgrade.FilterPins(targets, true)
 	if err != nil {
-		t.Fatalf("expected forced splitPinnedTargets to succeed, got: %v", err)
+		t.Fatalf("expected forced FilterPins to succeed, got: %v", err)
 	}
 	if len(allowed) != 1 {
 		t.Errorf("expected 1 allowed target, got %d", len(allowed))
+	}
+}
+
+func TestUpgradeCmd_DisabledManagerRejectedWithPackageArg(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "winget"}
+	reg := pm.NewRegistry(mockMgr)
+	reg.SetDisabled([]string{"winget"})
+	registryOverride = reg
+	t.Cleanup(func() { registryOverride = nil })
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "Git.Git", "-m", "winget", "--dry-run"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "disabled in configuration") {
+		t.Fatalf("expected disabled manager error when upgrading explicit package with -m, got: %v", err)
 	}
 }
 

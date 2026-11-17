@@ -93,7 +93,7 @@ func (p *PacmanManager) InstallPackage(ctx context.Context, id, version string) 
 		stderr = io.Discard
 	}
 
-	runExe, runArgs := wrapSudo(exe, []string{"-S", "--noconfirm", id})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"-S", "--noconfirm", id})
 	if err := runner.Run(ctx, runExe, runArgs, p.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("pacman install failed for %s: %w", id, err)
 	}

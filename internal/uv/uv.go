@@ -3,7 +3,6 @@ package uv
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,9 +20,12 @@ import (
 
 var (
 	_ pm.Manager             = (*UvManager)(nil)
+	_ pm.Locator             = (*UvManager)(nil)
+	_ pm.Cleaner             = (*UvManager)(nil)
 	_ pm.WarningFetcher      = (*UvManager)(nil)
 	_ pm.OfflineConfigurable = (*UvManager)(nil)
 	_ pm.NetworkDependent    = (*UvManager)(nil)
+	_ pm.IOConfigurable      = (*UvManager)(nil)
 )
 
 // UvManager implements the pm.Manager interface for Python CLI tools managed by `uv tool`.
@@ -47,6 +49,7 @@ func NewUvManager() *UvManager {
 
 func (u *UvManager) SetOffline(offline bool) {
 	u.offline = offline
+	httputil.SetClientOffline(u.client, offline)
 }
 
 func (u *UvManager) RequiresNetwork() bool {
@@ -150,34 +153,6 @@ func parseUvToolList(output string) []pm.PackageUpdate {
 	return tools
 }
 
-type pypiResponse struct {
-	Info struct {
-		Version string `json:"version"`
-	} `json:"info"`
-}
-
-func fetchPyPILatestVersion(ctx context.Context, client *http.Client, pkgName string) (string, error) {
-	url := fmt.Sprintf("https://pypi.org/pypi/%s/json", pkgName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Patchwork-CLI")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	var data pypiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", fmt.Errorf("invalid response: %w", err)
-	}
-	return strings.TrimSpace(data.Info.Version), nil
-}
-
 // GetAvailableUpdatesWithWarnings queries PyPI and collects partial failure warnings.
 func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := uvPath()
@@ -229,7 +204,7 @@ func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.P
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			latest, err := fetchPyPILatestVersion(ctx, client, t.Id)
+			latest, err := httputil.FetchPyPILatestVersion(ctx, client, t.Id)
 			if err != nil {
 				mu.Lock()
 				lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", t.Id, err))

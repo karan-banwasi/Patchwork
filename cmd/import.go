@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/profile"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	"github.com/spf13/cobra"
 )
 
@@ -94,15 +94,9 @@ func newImportCmd() *cobra.Command {
 
 			var targetMgrName string
 			if opts.manager != "" {
-				mgr, exists := registry.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-				}
-				if registry.IsDisabled(mgr.Name()) {
-					return fmt.Errorf("package manager %q is disabled in configuration", mgr.Name())
-				}
-				if !mgr.IsAvailable(ctx) {
-					return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+				mgr, err := resolveManager(ctx, registry, opts.manager, true, true)
+				if err != nil {
+					return err
 				}
 				targetMgrName = mgr.Name()
 			}
@@ -305,7 +299,7 @@ func newImportCmd() *cobra.Command {
 
 			if opts.json {
 				payload := importJSONOutput{
-					SchemaVersion: "1.0.0",
+					SchemaVersion: upgrade.CurrentSchemaVersion,
 					DryRun:        opts.dryRun,
 					Results:       results,
 					PinsRestored:  pinsRestored,
@@ -317,10 +311,7 @@ func newImportCmd() *cobra.Command {
 						DryRun:    dryRunCount,
 					},
 				}
-				enc := json.NewEncoder(out)
-				enc.SetEscapeHTML(false)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(payload); err != nil {
+				if err := encodeIndentedJSON(out, payload); err != nil {
 					return err
 				}
 			} else {

@@ -45,7 +45,8 @@ Patchwork and its underlying package manager drivers inspect standard operating 
 
 | Variable | Target Platform | Description |
 | :--- | :--- | :--- |
-| `PATH` | All | Scanned by `exec.LookPath` to determine availability and resolve absolute binary locations for all package manager CLIs (`brew`, `winget`, `scoop`, `choco`, `npm`, `dotnet`, `uv`, `cargo`, `pwsh`). Also verified by `pw doctor`. |
+| `PATH` | All | Scanned by `exec.LookPath` to determine availability and resolve absolute binary locations across all 24 supported package manager CLIs and system helpers (such as `sudo` on Linux). Also verified by `pw doctor`. |
+| `EDITOR` / `VISUAL` | All | Preferred text editor invoked by `pw config edit` (checks `EDITOR`, then `VISUAL`, falling back to `notepad` on Windows or `nano` on macOS/Linux). |
 | `SCOOP` | Windows | Root directory of user Scoop installation (default: `%USERPROFILE%\scoop`). |
 | `SCOOP_GLOBAL` | Windows | Root directory of global Scoop installation (default: `C:\ProgramData\scoop`). |
 | `USERPROFILE` | Windows | User home directory used to resolve Scoop fallback paths and user go bin directory. |

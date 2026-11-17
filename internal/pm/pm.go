@@ -2,8 +2,13 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
+	"strconv"
 	"time"
 )
 
@@ -168,4 +173,41 @@ func (ExecRunner) Run(ctx context.Context, name string, args []string, stdin io.
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
+}
+
+var (
+	ansiEscape      = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+	exitStatusRegex = regexp.MustCompile(`(?:^|\b)exit status (-?\d+)(?:\b|$)`)
+)
+
+// StripANSI removes ANSI escape sequences from command output.
+func StripANSI(s string) string {
+	return ansiEscape.ReplaceAllString(s, "")
+}
+
+// WrapSudo prepends sudo when executing privileged Linux package manager commands as a non-root user.
+func WrapSudo(cmd string, args []string) (string, []string) {
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+		if sudoPath, err := exec.LookPath("sudo"); err == nil {
+			return sudoPath, append([]string{cmd}, args...)
+		}
+	}
+	return cmd, args
+}
+
+// ExtractExitCode retrieves the process exit code from an error (supporting *exec.ExitError and mocked "exit status N" errors).
+func ExtractExitCode(err error) (int, bool) {
+	if err == nil {
+		return 0, true
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), true
+	}
+	if m := exitStatusRegex.FindStringSubmatch(err.Error()); len(m) == 2 {
+		if code, convErr := strconv.Atoi(m[1]); convErr == nil {
+			return code, true
+		}
+	}
+	return -1, false
 }

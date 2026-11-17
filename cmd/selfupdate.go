@@ -25,6 +25,7 @@ import (
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/httputil"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	ver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -597,12 +598,6 @@ func fetchTargetRelease(ctx context.Context, client *http.Client, apiBaseURL, ch
 	return &rel, nil
 }
 
-func writeSelfUpdateJSON(out io.Writer, payload selfUpdateJSONOutput) error {
-	enc := json.NewEncoder(out)
-	enc.SetIndent("", "  ")
-	return enc.Encode(payload)
-}
-
 func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
 	if opts.skipAttestation && opts.requireAttestation {
 		return fmt.Errorf("cannot specify both --skip-attestation and --require-attestation")
@@ -645,8 +640,8 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 
 	if opts.check {
 		if opts.json {
-			return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
-				SchemaVersion:   "1.0.0",
+			return encodeIndentedJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   upgrade.CurrentSchemaVersion,
 				CurrentVersion:  currentVersion,
 				LatestVersion:   rel.TagName,
 				UpdateAvailable: updateAvailable,
@@ -668,8 +663,8 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 	if !updateAvailable {
 		if opts.json {
 			updated := false
-			return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
-				SchemaVersion:   "1.0.0",
+			return encodeIndentedJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   upgrade.CurrentSchemaVersion,
 				CurrentVersion:  currentVersion,
 				LatestVersion:   rel.TagName,
 				UpdateAvailable: false,
@@ -849,8 +844,8 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 
 	if opts.json {
 		updated := true
-		return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
-			SchemaVersion:   "1.0.0",
+		return encodeIndentedJSON(out, selfUpdateJSONOutput{
+			SchemaVersion:   upgrade.CurrentSchemaVersion,
 			CurrentVersion:  currentVersion,
 			LatestVersion:   rel.TagName,
 			UpdateAvailable: true,

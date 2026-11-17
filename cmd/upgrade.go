@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/history"
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -36,30 +35,6 @@ type upgradeOptions struct {
 	concurrency      int
 }
 
-type upgradeResult struct {
-	pkg      pm.PackageUpdate
-	status   string
-	duration time.Duration
-	err      error
-}
-
-// printUpgradeSummaryTo renders a post-upgrade summary table of succeeded, failed, and skipped packages to out.
-func printUpgradeSummaryTo(out io.Writer, results []upgradeResult) {
-	if len(results) == 0 {
-		return
-	}
-	var uResults []upgrade.Result
-	for _, r := range results {
-		uResults = append(uResults, upgrade.Result{
-			Package:  r.pkg,
-			Status:   upgrade.Status(r.status),
-			Duration: r.duration,
-			Error:    r.err,
-		})
-	}
-	upgrade.NewSummary(uResults).Render(out)
-}
-
 func maybePrintWingetAgreementsNotice(out io.Writer, pkgs []pm.PackageUpdate, acceptAgreements bool) {
 	if !acceptAgreements {
 		return
@@ -73,20 +48,21 @@ func maybePrintWingetAgreementsNotice(out io.Writer, pkgs []pm.PackageUpdate, ac
 	}
 }
 
-func splitPinnedTargets(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageUpdate, skippedResults []upgradeResult, err error) {
-	allowedPkgs, skipped, err := upgrade.FilterPins(pkgs, ignorePins)
+func filterUpgradeCandidates(pkgs []pm.PackageUpdate, ignorePins bool, exclude []string, level string, pinWarnOut io.Writer) ([]pm.PackageUpdate, []upgrade.Result, []upgrade.Result, error) {
+	allowed, pinSkipped, err := upgrade.FilterPins(pkgs, ignorePins)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	for _, s := range skipped {
-		skippedResults = append(skippedResults, upgradeResult{
-			pkg:      s.Package,
-			status:   string(s.Status),
-			duration: s.Duration,
-			err:      s.Error,
-		})
+	if pinWarnOut != nil {
+		for _, sr := range pinSkipped {
+			fmt.Fprintf(pinWarnOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
+		}
 	}
-	return allowedPkgs, skippedResults, nil
+	allowed, policySkipped, err := upgrade.FilterPolicies(allowed, exclude, level)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return allowed, pinSkipped, policySkipped, nil
 }
 
 func newUpgradeCmd() *cobra.Command {
@@ -112,15 +88,10 @@ func newUpgradeCmd() *cobra.Command {
 
 			out := cmd.OutOrStdout()
 			errOut := cmd.ErrOrStderr()
-			registry := getDefaultRegistry()
+			registry, cfg := getDefaultRegistryAndConfig()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
-			cfg, _ := config.Load()
+			hydrateCommonDefaults(cmd, cfg, &opts.timeout, &opts.noRefresh, &opts.level, &opts.exclude)
 			if cfg != nil {
-				if !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
-					if d, err := time.ParseDuration(cfg.Defaults.Timeout); err == nil {
-						opts.timeout = d
-					}
-				}
 				if !cmd.Flags().Changed("accept-agreements") {
 					if cfg.Defaults.AcceptAgreements != nil {
 						opts.acceptAgreements = *cfg.Defaults.AcceptAgreements
@@ -130,15 +101,6 @@ func newUpgradeCmd() *cobra.Command {
 				}
 				if !cmd.Flags().Changed("trust-repository") && cfg.Defaults.TrustRepository != nil {
 					opts.trustRepository = *cfg.Defaults.TrustRepository
-				}
-				if !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
-					opts.noRefresh = *cfg.Defaults.NoRefresh
-				}
-				if !cmd.Flags().Changed("level") && cfg.Defaults.Level != "" {
-					opts.level = cfg.Defaults.Level
-				}
-				if !cmd.Flags().Changed("exclude") && len(cfg.Defaults.Exclude) > 0 {
-					opts.exclude = append([]string(nil), cfg.Defaults.Exclude...)
 				}
 			}
 			if _, err := semver.ParseLevel(opts.level); err != nil {
@@ -165,12 +127,9 @@ func newUpgradeCmd() *cobra.Command {
 			if opts.all || (opts.yes && len(args) == 0) {
 				var filter []string
 				if opts.manager != "" {
-					mgr, exists := registry.GetManager(opts.manager)
-					if !exists {
-						return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-					}
-					if !mgr.IsAvailable(cmd.Context()) {
-						return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+					mgr, err := resolveManager(cmd.Context(), registry, opts.manager, true, true)
+					if err != nil {
+						return err
 					}
 					filter = append(filter, opts.manager)
 					if !opts.json {
@@ -190,11 +149,7 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "Warning: %v\n", w)
 				}
 
-				allowed, pinSkipped, err := upgrade.FilterPins(updates, ignorePins)
-				if err != nil {
-					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
-				}
-				allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+				allowed, pinSkipped, policySkipped, err := filterUpgradeCandidates(updates, ignorePins, opts.exclude, opts.level, nil)
 				if err != nil {
 					return err
 				}
@@ -217,25 +172,15 @@ func newUpgradeCmd() *cobra.Command {
 				plan = upgrade.NewPlan(registry, allowed, skipped)
 			} else if len(args) > 0 {
 				if opts.manager != "" {
-					mgr, exists := registry.GetManager(opts.manager)
-					if !exists {
-						return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-					}
-					if !mgr.IsAvailable(cmd.Context()) {
-						return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+					mgr, err := resolveManager(cmd.Context(), registry, opts.manager, true, true)
+					if err != nil {
+						return err
 					}
 					var pkgs []pm.PackageUpdate
 					for _, packageId := range args {
 						pkgs = append(pkgs, pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: mgr.Name()})
 					}
-					allowed, pinSkipped, err := upgrade.FilterPins(pkgs, ignorePins)
-					if err != nil {
-						return err
-					}
-					for _, sr := range pinSkipped {
-						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
-					}
-					allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+					allowed, pinSkipped, policySkipped, err := filterUpgradeCandidates(pkgs, ignorePins, opts.exclude, opts.level, errOut)
 					if err != nil {
 						return err
 					}
@@ -292,14 +237,7 @@ func newUpgradeCmd() *cobra.Command {
 						})
 					}
 
-					allowed, pinnedSkipped, err := upgrade.FilterPins(matched, ignorePins)
-					if err != nil {
-						return err
-					}
-					for _, sr := range pinnedSkipped {
-						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
-					}
-					allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+					allowed, pinnedSkipped, policySkipped, err := filterUpgradeCandidates(matched, ignorePins, opts.exclude, opts.level, errOut)
 					if err != nil {
 						return err
 					}
@@ -322,12 +260,9 @@ func newUpgradeCmd() *cobra.Command {
 				// Interactive selection mode
 				var filter []string
 				if opts.manager != "" {
-					mgr, exists := registry.GetManager(opts.manager)
-					if !exists {
-						return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-					}
-					if !mgr.IsAvailable(cmd.Context()) {
-						return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
+					mgr, err := resolveManager(cmd.Context(), registry, opts.manager, true, true)
+					if err != nil {
+						return err
 					}
 					filter = append(filter, opts.manager)
 					fmt.Fprintf(out, "Fetching available updates for %s...\n", mgr.Name())
@@ -343,11 +278,7 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "Warning: %v\n", w)
 				}
 
-				allowed, pinSkipped, err := upgrade.FilterPins(updates, ignorePins)
-				if err != nil {
-					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
-				}
-				allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+				allowed, pinSkipped, policySkipped, err := filterUpgradeCandidates(updates, ignorePins, opts.exclude, opts.level, nil)
 				if err != nil {
 					return err
 				}
@@ -509,38 +440,9 @@ func newUpgradeCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip interactive selection and confirm upgrading all eligible updates")
 	cmd.Flags().IntVarP(&opts.concurrency, "concurrency", "j", 0, "Maximum number of package managers to upgrade in parallel (0 = all managers, 1 = serial)")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
-	_ = cmd.RegisterFlagCompletionFunc("level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"patch", "minor", "major"}, cobra.ShellCompDirectiveNoFileComp
-	})
+	_ = cmd.RegisterFlagCompletionFunc("level", completeLevelNames)
 
 	return cmd
-}
-
-func executePackageUpgrades(cmd *cobra.Command, registry *pm.Registry, pkgs []pm.PackageUpdate) ([]upgradeResult, bool) {
-	plan := &upgrade.Plan{Targets: pkgs}
-	executor := upgrade.NewExecutor(registry, cmd.OutOrStdout(), cmd.ErrOrStderr())
-	summary := executor.Execute(cmd.Context(), plan)
-	var results []upgradeResult
-	for _, r := range summary.Results {
-		results = append(results, upgradeResult{
-			pkg:      r.Package,
-			status:   string(r.Status),
-			duration: r.Duration,
-			err:      r.Error,
-		})
-	}
-	return results, summary.HasFailures()
-}
-
-func orderSelectedPackagesWithRegistry(reg *pm.Registry, pkgs []pm.PackageUpdate) []pm.PackageUpdate {
-	return upgrade.OrderTargets(reg, pkgs)
-}
-
-// orderSelectedPackages moves self-updating shell and terminal packages to the end
-// of the upgrade queue so that other selected packages complete before the host shell
-// or terminal is closed by its installer.
-func orderSelectedPackages(pkgs []pm.PackageUpdate) []pm.PackageUpdate {
-	return orderSelectedPackagesWithRegistry(getDefaultRegistry(), pkgs)
 }
 
 func recordUpgradeHistory(summary upgrade.Summary, managerFilter string) error {

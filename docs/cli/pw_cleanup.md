@@ -4,7 +4,7 @@ Clean up old package versions and download caches
 
 ### Synopsis
 
-Remove outdated package versions and prune download caches across supported package managers (Scoop, npm, uv) and clear Patchwork's temporary update cache.
+Remove outdated package versions and prune download caches across supported package managers (Homebrew, APT, DNF, Pacman, Zypper, Flatpak, Scoop, npm, pnpm, Bun, uv, RubyGems, mise) and clear Patchwork's temporary update cache.
 
 ```
 pw cleanup [flags]

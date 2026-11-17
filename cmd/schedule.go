@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/schedule"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	"github.com/spf13/cobra"
 )
 
@@ -195,7 +195,7 @@ func newScheduleStatusCmd() *cobra.Command {
 
 			if jsonOut {
 				payload := scheduleStatusJSON{
-					SchemaVersion: "1.0.0",
+					SchemaVersion: upgrade.CurrentSchemaVersion,
 					Enabled:       st.Enabled,
 					Registered:    registered,
 					Interval:      st.Interval,
@@ -211,9 +211,7 @@ func newScheduleStatusCmd() *cobra.Command {
 				if !st.UpdatedAt.IsZero() {
 					payload.UpdatedAt = st.UpdatedAt.UTC().Format(time.RFC3339)
 				}
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(payload)
+				return encodeIndentedJSON(cmd.OutOrStdout(), payload)
 			}
 
 			out := cmd.OutOrStdout()
@@ -305,20 +303,9 @@ func newScheduleRunCmd() *cobra.Command {
 				shouldNotify = st.Notify
 			}
 
-			registry := getDefaultRegistry()
+			registry, cfg := getDefaultRegistryAndConfig()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
-
-			cfg, _ := config.Load()
-			if cfg != nil {
-				if !cmd.Flags().Changed("timeout") && cfg.Defaults.Timeout != "" {
-					if d, parseErr := time.ParseDuration(cfg.Defaults.Timeout); parseErr == nil {
-						timeout = d
-					}
-				}
-				if cfg.Defaults.NoRefresh != nil {
-					registry.SkipRefresh = *cfg.Defaults.NoRefresh
-				}
-			}
+			hydrateCommonDefaults(cmd, cfg, &timeout, &registry.SkipRefresh, nil, nil)
 
 			if offline {
 				registry.SetOffline(true)

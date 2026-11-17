@@ -119,15 +119,6 @@ func dnfPath() (string, error) {
 	return "", fmt.Errorf("dnf executable not found")
 }
 
-func wrapSudo(cmd string, args []string) (string, []string) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		if sudoPath, err := exec.LookPath("sudo"); err == nil {
-			return sudoPath, append([]string{cmd}, args...)
-		}
-	}
-	return cmd, args
-}
-
 func (d *DnfManager) Refresh(ctx context.Context) error {
 	exe, err := d.Path()
 	if err != nil {
@@ -137,7 +128,7 @@ func (d *DnfManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"makecache"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"makecache"})
 	return runner.Run(ctx, runExe, runArgs, d.stdin, d.stdout, d.stderr)
 }
 
@@ -151,11 +142,11 @@ func (d *DnfManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Write
 		runner = pm.ExecRunner{}
 	}
 	fmt.Fprintln(out, "--- Cleaning up DNF cache and packages ---")
-	runExe, runArgs := wrapSudo(exe, []string{"clean", "all"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"clean", "all"})
 	if err := runner.Run(ctx, runExe, runArgs, d.stdin, out, errOut); err != nil {
 		return err
 	}
-	runExe, runArgs = wrapSudo(exe, []string{"autoremove", "-y"})
+	runExe, runArgs = pm.WrapSudo(exe, []string{"autoremove", "-y"})
 	return runner.Run(ctx, runExe, runArgs, d.stdin, out, errOut)
 }
 
@@ -190,7 +181,7 @@ func (d *DnfManager) UpgradePackages(ctx context.Context, ids []string) error {
 	}
 
 	args := append([]string{"upgrade", "-y"}, ids...)
-	runExe, runArgs := wrapSudo(exe, args)
+	runExe, runArgs := pm.WrapSudo(exe, args)
 	if err := runner.Run(ctx, runExe, runArgs, d.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("dnf upgrade failed for %s: %w", strings.Join(ids, ", "), err)
 	}
@@ -231,13 +222,7 @@ func (d *DnfManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdat
 	err = runner.Run(ctx, exe, []string{"check-update", "--quiet"}, nil, &stdout, &stderr)
 	// dnf check-update returns exit code 100 if updates are available, 0 if no updates
 	if err != nil {
-		exitCode := -1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if strings.Contains(err.Error(), "100") {
-			exitCode = 100
-		}
-		if exitCode != 100 {
+		if code, ok := pm.ExtractExitCode(err); !ok || code != 100 {
 			errMsg := strings.TrimSpace(stderr.String())
 			if errMsg != "" {
 				return nil, fmt.Errorf("dnf check-update failed: %w (%s)", err, errMsg)

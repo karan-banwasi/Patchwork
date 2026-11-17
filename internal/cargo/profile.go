@@ -16,19 +16,10 @@ var (
 	_ pm.Installer = (*CargoManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (c *CargoManager) resolveExe() (string, error) {
 	exe, err := cargoPath()
 	if err != nil {
-		if isMockRunner(c.runner) {
+		if !pm.IsExecRunner(c.runner) {
 			return "cargo", nil
 		}
 		return "", err

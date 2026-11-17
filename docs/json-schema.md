@@ -151,6 +151,10 @@ Each object in `pinned_packages` contains:
 | `raw` | string | The raw pin string stored in configuration (e.g. `"Git.Git"` or `"winget:Git.Git"`). |
 | `id` | string | The sanitized package ID. |
 | `manager` | string (optional) | Scoped package manager name, or omitted/empty if pinned globally across all managers. |
+| `version` | string (optional) | Optional semver constraint restricting which versions are pinned (e.g. `"<23"`, `"~22.0.0"`). |
+| `reason` | string (optional) | Optional human-readable note explaining why the package is pinned. |
+| `expires_at` | string (optional) | Optional RFC 3339 timestamp after which the pin expires automatically. |
+| `expired` | boolean | Whether the pin has an expiration timestamp in the past. |
 
 ### Example Payload
 ```json
@@ -160,12 +164,17 @@ Each object in `pinned_packages` contains:
   "pinned_packages": [
     {
       "raw": "Git.Git",
-      "id": "Git.Git"
+      "id": "Git.Git",
+      "expired": false
     },
     {
       "raw": "scoop:curl",
       "id": "curl",
-      "manager": "scoop"
+      "manager": "scoop",
+      "version": "<9.0.0",
+      "reason": "Hold until plugin compatibility is verified",
+      "expires_at": "2026-12-31T23:59:59Z",
+      "expired": false
     }
   ]
 }

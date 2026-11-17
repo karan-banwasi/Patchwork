@@ -16,19 +16,10 @@ var (
 	_ pm.Installer = (*DotnetManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (d *DotnetManager) resolveExe() (string, error) {
 	exe, err := dotnetPath()
 	if err != nil {
-		if isMockRunner(d.runner) {
+		if !pm.IsExecRunner(d.runner) {
 			return "dotnet", nil
 		}
 		return "", err

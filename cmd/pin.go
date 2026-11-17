@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,30 +8,18 @@ import (
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	"github.com/spf13/cobra"
 )
 
 // filterOutPinned removes packages that are pinned in the user's configuration.
 // It fails closed: if the configuration file exists but cannot be parsed, it returns an error.
 func filterOutPinned(updates []pm.PackageUpdate) ([]pm.PackageUpdate, int, error) {
-	cfg, err := config.Load()
+	allowed, skipped, err := upgrade.FilterPins(updates, false)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load configuration: %w", err)
 	}
-	if len(cfg.PinnedPackages) == 0 && len(cfg.Pins) == 0 {
-		return updates, 0, nil
-	}
-	var filtered []pm.PackageUpdate
-	var skipped int
-	for _, u := range updates {
-		_, violated := cfg.MatchPin(u.ManagerName, u.Id, u.Name, u.AvailableVersion)
-		if violated {
-			skipped++
-			continue
-		}
-		filtered = append(filtered, u)
-	}
-	return filtered, skipped, nil
+	return allowed, len(skipped), nil
 }
 
 func parseExpiry(s string) (*time.Time, error) {
@@ -208,7 +195,7 @@ func newPinnedCmd() *cobra.Command {
 					Packages      []pinnedPkg `json:"pinned_packages"`
 				}
 				out := jsonPinnedOutput{
-					SchemaVersion: "1.0.0",
+					SchemaVersion: upgrade.CurrentSchemaVersion,
 					Count:         len(cfg.Pins),
 					Packages:      make([]pinnedPkg, 0, len(cfg.Pins)),
 				}
@@ -228,10 +215,7 @@ func newPinnedCmd() *cobra.Command {
 					}
 					out.Packages = append(out.Packages, item)
 				}
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetEscapeHTML(false)
-				enc.SetIndent("", "  ")
-				return enc.Encode(out)
+				return encodeIndentedJSON(cmd.OutOrStdout(), out)
 			}
 			if len(cfg.Pins) == 0 {
 				cmd.Println("No packages are currently pinned.")

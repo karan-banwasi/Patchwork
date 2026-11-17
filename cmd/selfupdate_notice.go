@@ -33,7 +33,7 @@ type SelfUpdateCache struct {
 
 // SelfUpdateCachePath returns the path to the passive self-update cache file.
 func SelfUpdateCachePath() string {
-	if custom := os.Getenv("PATCHWORK_SELFUPDATE_CACHE"); custom != "" {
+	if custom := strings.TrimSpace(os.Getenv("PATCHWORK_SELFUPDATE_CACHE")); custom != "" {
 		return custom
 	}
 	return filepath.Join(filepath.Dir(config.CachePath()), "selfupdate-cache.json")
@@ -77,38 +77,7 @@ func saveSelfUpdateCache(cache *SelfUpdateCache) error {
 	if err != nil {
 		return err
 	}
-
-	path := SelfUpdateCachePath()
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "selfupdate-cache-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	closed := false
-	defer func() {
-		if !closed {
-			_ = tmp.Close()
-		}
-		_ = os.Remove(tmpName)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	closed = true
-
-	_ = os.Chmod(tmpName, 0600)
-	return os.Rename(tmpName, path)
+	return config.WriteAtomic(SelfUpdateCachePath(), data, 0600)
 }
 
 func isBoolFlagSet(cmd *cobra.Command, name string) bool {

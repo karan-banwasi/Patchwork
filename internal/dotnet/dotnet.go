@@ -16,9 +16,11 @@ import (
 
 var (
 	_ pm.Manager             = (*DotnetManager)(nil)
+	_ pm.Locator             = (*DotnetManager)(nil)
 	_ pm.WarningFetcher      = (*DotnetManager)(nil)
 	_ pm.OfflineConfigurable = (*DotnetManager)(nil)
 	_ pm.NetworkDependent    = (*DotnetManager)(nil)
+	_ pm.IOConfigurable      = (*DotnetManager)(nil)
 )
 
 // DotnetManager implements the pm.Manager interface for global .NET tools.

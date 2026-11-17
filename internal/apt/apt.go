@@ -119,15 +119,6 @@ func aptPath() (string, error) {
 	return "", fmt.Errorf("apt executable not found")
 }
 
-func wrapSudo(cmd string, args []string) (string, []string) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		if sudoPath, err := exec.LookPath("sudo"); err == nil {
-			return sudoPath, append([]string{cmd}, args...)
-		}
-	}
-	return cmd, args
-}
-
 func (a *AptManager) Refresh(ctx context.Context) error {
 	exe, err := a.Path()
 	if err != nil {
@@ -137,7 +128,7 @@ func (a *AptManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"update"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"update"})
 	return runner.Run(ctx, runExe, runArgs, a.stdin, a.stdout, a.stderr)
 }
 
@@ -151,11 +142,11 @@ func (a *AptManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Write
 		runner = pm.ExecRunner{}
 	}
 	fmt.Fprintln(out, "--- Cleaning up APT packages and cache ---")
-	runExe, runArgs := wrapSudo(exe, []string{"autoremove", "-y"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"autoremove", "-y"})
 	if err := runner.Run(ctx, runExe, runArgs, a.stdin, out, errOut); err != nil {
 		return err
 	}
-	runExe, runArgs = wrapSudo(exe, []string{"clean"})
+	runExe, runArgs = pm.WrapSudo(exe, []string{"clean"})
 	return runner.Run(ctx, runExe, runArgs, a.stdin, out, errOut)
 }
 
@@ -190,7 +181,7 @@ func (a *AptManager) UpgradePackages(ctx context.Context, ids []string) error {
 	}
 
 	args := append([]string{"install", "--only-upgrade", "-y"}, ids...)
-	runExe, runArgs := wrapSudo(exe, args)
+	runExe, runArgs := pm.WrapSudo(exe, args)
 	if err := runner.Run(ctx, runExe, runArgs, a.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("apt upgrade failed for %s: %w", strings.Join(ids, ", "), err)
 	}

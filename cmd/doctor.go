@@ -62,12 +62,11 @@ func newDoctorCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			reg := getDefaultRegistry()
+			reg, cfg := getDefaultRegistryAndConfig()
 
 			fmt.Fprintf(out, "Patchwork %s (%s/%s)\n\n", version, runtime.GOOS, runtime.GOARCH)
 
 			cfgPath, _ := config.ConfigPath()
-			cfg, _ := config.Load()
 			pinnedCount := 0
 			if cfg != nil {
 				pinnedCount = len(cfg.PinnedPackages)
@@ -105,9 +104,7 @@ func newDoctorCmd() *cobra.Command {
 						if p, err := loc.Path(); err == nil && p != "" {
 							binPath = p
 						}
-						if v, err := loc.Version(cmd.Context()); err == nil && v != "" {
-							ver = v
-						} else if v != "" {
+						if v, _ := loc.Version(cmd.Context()); v != "" {
 							ver = v
 						}
 					}

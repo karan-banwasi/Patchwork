@@ -16,19 +16,10 @@ var (
 	_ pm.Installer = (*UvManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (u *UvManager) resolveExe() (string, error) {
 	exe, err := uvPath()
 	if err != nil {
-		if isMockRunner(u.runner) {
+		if !pm.IsExecRunner(u.runner) {
 			return "uv", nil
 		}
 		return "", err

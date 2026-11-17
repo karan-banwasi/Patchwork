@@ -175,7 +175,6 @@ type parsedVersion struct {
 	segments []int
 	phase    float64
 	phaseNum int
-	preTag   string
 }
 
 func parseVersion(v string) parsedVersion {
@@ -219,7 +218,6 @@ func parseVersion(v string) parsedVersion {
 			case "beta", "b":
 				pv.phase = phaseBeta
 			}
-			pv.preTag = tag
 
 			if numStr != "" {
 				if n, err := strconv.Atoi(numStr); err == nil {

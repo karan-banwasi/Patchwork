@@ -53,7 +53,7 @@ func (c *ChocoManager) ListInstalled(ctx context.Context) ([]pm.InstalledPackage
 
 func parseChocoListOutput(output string) []pm.InstalledPackage {
 	var pkgs []pm.InstalledPackage
-	clean := ansiEscape.ReplaceAllString(output, "")
+	clean := pm.StripANSI(output)
 	for _, rawLine := range strings.Split(clean, "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "Chocolatey v") || strings.Contains(line, "packages installed.") {

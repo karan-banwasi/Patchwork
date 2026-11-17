@@ -74,8 +74,8 @@ PackageUrl: https://github.com/karan-banwasi/Patchwork
 License: MIT
 LicenseUrl: https://github.com/karan-banwasi/Patchwork/blob/main/LICENSE
 Copyright: Copyright (c) Karan Banwasi
-ShortDescription: A fast Windows CLI utility to check and manage package updates across Winget, Scoop, Chocolatey, npm, and .NET tools.
-Description: Patchwork (pw) is a native Windows CLI tool that concurrently checks and interactively upgrades outdated packages across Windows Package Manager (winget), Scoop, Chocolatey, npm global packages, and .NET global tools.
+ShortDescription: A fast cross-platform CLI utility to check, pin, and upgrade packages across 24 package managers.
+Description: Patchwork (pw) is a cross-platform CLI utility for Windows, macOS, and Linux that concurrently checks, pins, exports, rolls back, and interactively upgrades packages across 24 supported package managers (including Winget, Scoop, Chocolatey, PSResource, Homebrew, Mac App Store, APT, DNF, Pacman, Zypper, Flatpak, Snap, npm, pnpm, Bun, .NET tools, uv, pipx, Cargo, rustup, RubyGems, mise, asdf, and VS Code extensions).
 Moniker: patchwork
 Tags:
   - cli

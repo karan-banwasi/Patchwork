@@ -112,15 +112,6 @@ func zypperPath() (string, error) {
 	return "", fmt.Errorf("zypper executable not found")
 }
 
-func wrapSudo(cmd string, args []string) (string, []string) {
-	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
-		if sudoPath, err := exec.LookPath("sudo"); err == nil {
-			return sudoPath, append([]string{cmd}, args...)
-		}
-	}
-	return cmd, args
-}
-
 func (z *ZypperManager) Refresh(ctx context.Context) error {
 	exe, err := z.Path()
 	if err != nil {
@@ -130,7 +121,7 @@ func (z *ZypperManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	runExe, runArgs := wrapSudo(exe, []string{"refresh"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"refresh"})
 	return runner.Run(ctx, runExe, runArgs, z.stdin, z.stdout, z.stderr)
 }
 
@@ -144,7 +135,7 @@ func (z *ZypperManager) Cleanup(ctx context.Context, out io.Writer, errOut io.Wr
 		runner = pm.ExecRunner{}
 	}
 	fmt.Fprintln(out, "--- Cleaning up zypper cache ---")
-	runExe, runArgs := wrapSudo(exe, []string{"clean", "--all"})
+	runExe, runArgs := pm.WrapSudo(exe, []string{"clean", "--all"})
 	return runner.Run(ctx, runExe, runArgs, z.stdin, out, errOut)
 }
 
@@ -179,7 +170,7 @@ func (z *ZypperManager) UpgradePackages(ctx context.Context, ids []string) error
 	}
 
 	args := append([]string{"--non-interactive", "update"}, ids...)
-	runExe, runArgs := wrapSudo(exe, args)
+	runExe, runArgs := pm.WrapSudo(exe, args)
 	if err := runner.Run(ctx, runExe, runArgs, z.stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("zypper update failed for %s: %w", strings.Join(ids, ", "), err)
 	}
@@ -199,16 +190,8 @@ func (z *ZypperManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 	var stdout, stderr bytes.Buffer
 	err = runner.Run(ctx, exe, []string{"--terse", "list-updates"}, nil, &stdout, &stderr)
 	if err != nil {
-		exitCode := -1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if strings.Contains(err.Error(), "100") {
-			exitCode = 100
-		} else if strings.Contains(err.Error(), "101") {
-			exitCode = 101
-		}
 		// zypper returns 0 (no updates), 100 (updates available), 101 (updates available, restart suggested)
-		if exitCode != 100 && exitCode != 101 {
+		if code, ok := pm.ExtractExitCode(err); !ok || (code != 100 && code != 101) {
 			errMsg := strings.TrimSpace(stderr.String())
 			if errMsg != "" {
 				return nil, fmt.Errorf("zypper list-updates failed: %w (%s)", err, errMsg)

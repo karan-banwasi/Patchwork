@@ -252,57 +252,6 @@ func TestAdversarial_InteractiveCancellation_ExitCode(t *testing.T) {
 	}
 }
 
-// TestAdversarial_Selector_RangeEdgeCases stress-tests parseSelectionIndices
-// with adversarial and unusual inputs.
-func TestAdversarial_Selector_RangeEdgeCases(t *testing.T) {
-	total := 10
-
-	tests := []struct {
-		name      string
-		input     string
-		expected  []int
-		expectErr bool
-	}{
-		{"leading zeros", "01, 03", []int{0, 2}, false},
-		{"overlapping ranges", "1-3, 2-5", []int{0, 1, 2, 3, 4}, false},
-		{"whitespace variations", "  1  ,   4 - 6  ", []int{0, 3, 4, 5}, false},
-		{"duplicate single items", "2, 2, 2", []int{1}, false},
-		{"single element range", "3-3", []int{2}, false},
-		{"negative number in range", "-1-3", nil, true},
-		{"trailing dash", "1-", nil, true},
-		{"leading dash", "-3", nil, true},
-		{"double dash", "1--3", nil, true},
-		{"trailing comma", "1, 2,", []int{0, 1}, false},
-		{"empty comma tokens", "1,,,3", []int{0, 2}, false},
-		{"out of bounds zero in range", "0-3", nil, true},
-		{"out of bounds end in range", "8-11", nil, true},
-		{"overflow number", "999999999999999999999999", nil, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseSelectionIndices(tt.input, total)
-			if tt.expectErr {
-				if err == nil {
-					t.Errorf("expected error for input %q, got nil (result: %v)", tt.input, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error for input %q: %v", tt.input, err)
-			}
-			if len(got) != len(tt.expected) {
-				t.Fatalf("length mismatch: got %v, want %v", got, tt.expected)
-			}
-			for i := range got {
-				if got[i] != tt.expected[i] {
-					t.Errorf("at index %d: got %d, want %d", i, got[i], tt.expected[i])
-				}
-			}
-		})
-	}
-}
-
 // TestHelperProcessInteractiveCancel is the subprocess target for testing actual process exit code 3.
 func TestHelperProcessInteractiveCancel(t *testing.T) {
 	sub := os.Getenv("GO_TEST_SUBPROCESS_CANCEL")

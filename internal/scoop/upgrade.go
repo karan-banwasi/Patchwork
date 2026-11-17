@@ -45,8 +45,3 @@ func (s *ScoopManager) UpgradePackage(ctx context.Context, id string) error {
 	}
 	return nil
 }
-
-// UpgradePackage is a package-level helper for convenience.
-func UpgradePackage(ctx context.Context, id string) error {
-	return NewScoopManager().UpgradePackage(ctx, id)
-}

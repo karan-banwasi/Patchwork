@@ -74,6 +74,7 @@ func (b *BunManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
 
 func (b *BunManager) SetOffline(offline bool) {
 	b.offline = offline
+	httputil.SetClientOffline(b.client, offline)
 }
 
 func (b *BunManager) RequiresNetwork() bool {
@@ -220,7 +221,7 @@ func fetchNpmLatestVersion(ctx context.Context, client *http.Client, pkgName str
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Patchwork-CLI")
+	req.Header.Set("User-Agent", httputil.DefaultUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

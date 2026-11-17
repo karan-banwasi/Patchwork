@@ -49,9 +49,9 @@ func newRollbackCmd() *cobra.Command {
 
 			var mgrFilter string
 			if opts.manager != "" {
-				mgr, exists := registry.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
+				mgr, err := resolveManager(cmd.Context(), registry, opts.manager, false, false)
+				if err != nil {
+					return err
 				}
 				mgrFilter = mgr.Name()
 			}

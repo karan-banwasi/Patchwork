@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
@@ -21,7 +20,7 @@ func newCleanupCmd() *cobra.Command {
 		Use:     "cleanup",
 		Aliases: []string{"clean"},
 		Short:   "Clean up old package versions and download caches",
-		Long:    `Remove outdated package versions and prune download caches across supported package managers (Scoop, npm, uv) and clear Patchwork's temporary update cache.`,
+		Long:    `Remove outdated package versions and prune download caches across supported package managers (Homebrew, APT, DNF, Pacman, Zypper, Flatpak, Scoop, npm, pnpm, Bun, uv, RubyGems, mise) and clear Patchwork's temporary update cache.`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -33,12 +32,9 @@ func newCleanupCmd() *cobra.Command {
 
 			var managers []pm.Manager
 			if opts.manager != "" {
-				mgr, exists := reg.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(reg.ManagerNames(), ", "))
-				}
-				if reg.IsDisabled(mgr.Name()) {
-					return fmt.Errorf("package manager %q is disabled in configuration", opts.manager)
+				mgr, err := resolveManager(cmd.Context(), reg, opts.manager, true, false)
+				if err != nil {
+					return err
 				}
 				managers = []pm.Manager{mgr}
 			} else {

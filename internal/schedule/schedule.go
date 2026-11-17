@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
@@ -91,40 +92,7 @@ func (s *State) SaveTo(path string) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, data, 0600)
-}
-
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "schedule-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	closed := false
-	defer func() {
-		if !closed {
-			_ = tmp.Close()
-		}
-		_ = os.Remove(tmpName)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	closed = true
-
-	_ = os.Chmod(tmpName, perm)
-	return os.Rename(tmpName, path)
+	return config.WriteAtomic(path, data, 0600)
 }
 
 // ParseInterval parses an interval specification ("hourly", "daily", "weekly",
@@ -368,7 +336,7 @@ func (s *Scheduler) enableDarwin(ctx context.Context, bin string, interval time.
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0755); err != nil {
 		return fmt.Errorf("failed to create LaunchAgents directory: %w", err)
 	}
-	if err := writeAtomic(plistPath, []byte(plistContent), 0644); err != nil {
+	if err := config.WriteAtomic(plistPath, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to write plist %s: %w", plistPath, err)
 	}
 
@@ -435,10 +403,10 @@ func (s *Scheduler) enableLinuxSystemd(ctx context.Context, bin string, interval
 	if err := os.MkdirAll(unitDir, 0755); err != nil {
 		return fmt.Errorf("failed to create systemd user directory: %w", err)
 	}
-	if err := writeAtomic(filepath.Join(unitDir, systemdServiceName), []byte(serviceContent), 0644); err != nil {
+	if err := config.WriteAtomic(filepath.Join(unitDir, systemdServiceName), []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("failed to write systemd service unit: %w", err)
 	}
-	if err := writeAtomic(filepath.Join(unitDir, systemdTimerName), []byte(timerContent), 0644); err != nil {
+	if err := config.WriteAtomic(filepath.Join(unitDir, systemdTimerName), []byte(timerContent), 0644); err != nil {
 		return fmt.Errorf("failed to write systemd timer unit: %w", err)
 	}
 
@@ -586,9 +554,6 @@ func formatISO8601Duration(d time.Duration) string {
 	totalSeconds := int64(d.Seconds())
 	if totalSeconds <= 0 {
 		return "PT15M"
-	}
-	if totalSeconds%(7*86400) == 0 {
-		return fmt.Sprintf("P%dD", totalSeconds/86400)
 	}
 	if totalSeconds%86400 == 0 {
 		return fmt.Sprintf("P%dD", totalSeconds/86400)

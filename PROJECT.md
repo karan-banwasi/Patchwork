@@ -1,12 +1,12 @@
 # Project: Patchwork — GitHub Issues Resolution & Release Readiness
 
 ## Architecture
-- **Language**: Go 1.27.3
-- **Entry Points**: `main.go` / `cmd/` (Cobra CLI tree)
-- **Core Domain**: `internal/pm` defining `Manager` interface, optional extension interfaces (`Locator`, `Cleaner`, `Deferrer`, `Refresher`, `BulkUpgrader`, `IOConfigurable`, `TimeoutProvider`), and `Runner` abstraction.
-- **Package Managers**: `internal/brew`, `internal/mas`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/psresource`, `internal/apt`, `internal/dnf`, `internal/pacman`, `internal/zypper`, `internal/flatpak`, `internal/snap`, `internal/npm`, `internal/pnpm`, `internal/bun`, `internal/dotnet`, `internal/uv`, `internal/pipx`, `internal/cargo`, `internal/rustup`, `internal/gem`, `internal/mise`, `internal/asdf`, `internal/vscode`.
-- **Configuration & Utilities**: `internal/config`, `cmd/selfupdate.go`.
-- **CI / Distribution**: `.github/workflows/release.yml`, `install.ps1`.
+- **Language**: Go 1.27.4
+- **Entry Points**: `main.go` and `cmd/pw/main.go` (Cobra CLI tree in `cmd/`)
+- **Core Domain**: `internal/pm` defining `Manager` interface, optional extension interfaces (`Locator`, `Cleaner`, `Deferrer`, `Refresher`, `BulkUpgrader`, `DetailedBulkUpgrader`, `OfflineConfigurable`, `NetworkDependent`, `IOConfigurable`, `OptionsConfigurable`, `WarningFetcher`, `TimeoutProvider`, `Lister`, `Installer`, `Rollbackable`), and `Runner` abstraction.
+- **Package Managers (24 Drivers)**: `internal/brew`, `internal/mas`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/psresource`, `internal/apt`, `internal/dnf`, `internal/pacman`, `internal/zypper`, `internal/flatpak`, `internal/snap`, `internal/npm`, `internal/pnpm`, `internal/bun`, `internal/dotnet`, `internal/uv`, `internal/pipx`, `internal/cargo`, `internal/rustup`, `internal/gem`, `internal/mise`, `internal/asdf`, `internal/vscode`.
+- **Core Subsystems**: `internal/upgrade`, `internal/version`, `internal/config`, `internal/history`, `internal/profile`, `internal/schedule`, `internal/httputil`, `internal/exitcodes`.
+- **CI / Distribution**: `.github/workflows/{ci,release,codeql}.yml`, `.goreleaser.yaml`, `install.ps1`, `install.sh`, `winget/`, `Formula/`, `bucket/`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
@@ -46,12 +46,12 @@
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | P0 Critical: Cross-Platform Self-Update & SHA256SUMS | Issue #23: Cross-platform asset mapping for `(GOOS, GOARCH)`, universal `SHA256SUMS` generation in release workflow and consumption in `selfupdate.go` and `install.ps1`, update file cleanup, test matrix | none | DONE (resolved in cmd/selfupdate.go, release.yml, install.ps1; 100% test pass) |
+| M1 | P0 Critical: Cross-Platform Self-Update & SHA256SUMS | Issue #23: Cross-platform asset mapping for `(GOOS, GOARCH)`, universal `SHA256SUMS` generation in release workflow and consumption in `selfupdate.go` and `install.ps1`, update file cleanup, test matrix | none | DONE |
 | M2 | Security & Release Pipeline Hardening | Issues #24, #25, #26, #28, #29, #30: Attestation verification, workflow secrets scoping, atomic config saves, install.ps1 error handling, CI hygiene | M1 | DONE |
-| M3 | Core Architecture & Engine Refactoring | Issues #27, #31, #32, #33, #34, #35, #36, #37, #38, #39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured error reporting, survey migration, exit codes | M1 | M3A (Issues #31, #32, #33, #34) DONE; M3B PLANNED |
-| M4 | Governance & Documentation Alignment | Issues #40, #41, #42, #43, #44: Cross-platform README, SECURITY.md, CONTRIBUTING.md, templates, ARCHITECTURE.md, purge stale manifests | none | PLANNED |
-| M5 | Distribution & Extended Features | Issues #45, #46, #47, #48, #49, #50, #51, #52: Rich config, advanced upgrade policies, notifications, history, additional managers | M2, M3 | IN PROGRESS (Issue #45 DONE; Issues #46-#52 pending) |
-| M6 | Final Verification, CI Validation & Release Prep | Verification across all platforms, remote GitHub Actions CI green, clean working tree, ready for release | M1-M5 | PLANNED |
+| M3 | Core Architecture & Engine Refactoring | Issues #27, #31–#39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured warnings, TUI selector, HTTP retry/offline client, golden fixtures, exit codes, JSON schemas | M1 | DONE |
+| M4 | Governance & Documentation Alignment | Issues #40–#44: Cross-platform README, SECURITY.md, CONTRIBUTING.md, templates, ARCHITECTURE.md, developer guides, generated CLI docs | none | DONE |
+| M5 | Distribution & Extended Features | Issues #45–#52: Distribution (`cmd/pw`, GoReleaser, Homebrew tap, Scoop bucket, `install.sh`), rich config & pins, 24 managers, policies/parallelism/changelog, scheduler & notifications, history & rollback, profile export/import, self-update notice | M2, M3 | DONE |
+| M6 | Cleanup, Bug Fixes & Final CI Validation | Issues #55–#61: Dead code removal, driver bug fixes, shared helpers, documentation sync, multi-OS CI verification | M1–M5 | IN PROGRESS |
 
 ## Interface Contracts
 ### Self-Update Asset & Checksum Resolver (`cmd/selfupdate.go`)
@@ -61,8 +61,9 @@
   - Fetches and parses `SHA256SUMS` from the release assets (format: `<sha256>  <filename>`). Falls back to winget manifest only if on Windows and `SHA256SUMS` is unavailable.
 
 ## Code Layout
-- `cmd/`: CLI commands (`root.go`, `selfupdate.go`, `upgrade.go`, `check.go`, `pin.go`, `doctor.go`, `cleanup.go`).
-- `internal/pm/`: Package manager core interface and runner abstractions.
-- `internal/<manager>/`: Package manager concrete drivers.
-- `internal/config/`: Configuration handling (`config.go`).
-- `.github/workflows/`: CI and Release workflows (`release.yml`).
+- `main.go` & `cmd/pw/main.go`: CLI entry points.
+- `cmd/`: CLI commands (`root.go`, `selfupdate.go`, `selfupdate_notice.go`, `upgrade.go`, `check.go`, `pin.go`, `doctor.go`, `cleanup.go`, `config.go`, `history.go`, `rollback.go`, `export.go`, `import.go`, `schedule.go`, `version.go`).
+- `internal/pm/`: Package manager core interfaces (`Manager`, extension interfaces, `Registry`, `Runner`).
+- `internal/<manager>/`: Concrete drivers for 24 supported package managers.
+- `internal/{config,exitcodes,history,httputil,profile,schedule,upgrade,version}/`: Shared subsystems and domain logic.
+- `.github/workflows/`: CI, CodeQL, and Release workflows (`ci.yml`, `codeql.yml`, `release.yml`).

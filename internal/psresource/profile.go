@@ -17,19 +17,10 @@ var (
 	_ pm.Installer = (*PSResourceManager)(nil)
 )
 
-func isMockRunner(r pm.Runner) bool {
-	if r == nil {
-		return false
-	}
-	_, isExec := r.(pm.ExecRunner)
-	_, isExecPtr := r.(*pm.ExecRunner)
-	return !isExec && !isExecPtr
-}
-
 func (p *PSResourceManager) resolveExe() (string, error) {
 	exe, err := pwshPath()
 	if err != nil {
-		if isMockRunner(p.runner) {
+		if !pm.IsExecRunner(p.runner) {
 			return "pwsh", nil
 		}
 		return "", err
@@ -37,21 +28,7 @@ func (p *PSResourceManager) resolveExe() (string, error) {
 	return exe, nil
 }
 
-const listPSResourceScript = `
-$ErrorActionPreference = 'Stop'
-try {
-    if (-not (Get-Command Get-InstalledPSResource -ErrorAction SilentlyContinue)) { exit 0 }
-    $rawInstalled = try {
-        Get-InstalledPSResource -Scope CurrentUser -ErrorAction Stop
-    } catch {
-        if ($_.FullyQualifiedErrorId -like "*InstalledPackageNotFound*" -or $_.Exception.Message -like "*No match was found*") {
-            $null
-        } else {
-            throw
-        }
-    }
-    if (-not $rawInstalled) { exit 0 }
-    $installed = $rawInstalled | Group-Object Name | ForEach-Object { $_.Group | Sort-Object {[version]($_.Version -replace '-.*$','')} -Descending | Select-Object -First 1 }
+const listPSResourceScript = psResourceInstalledPreamble + `
     $list = @()
     foreach ($pkg in $installed) {
         $list += [PSCustomObject]@{
