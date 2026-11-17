@@ -473,3 +473,109 @@ func TestUpgradeCmd_DefaultFlagsMerging(t *testing.T) {
 		t.Errorf("expected explicit CLI flag --accept-agreements to override config default, got: %v", mockMgr.configuredOpts.AcceptAgreements)
 	}
 }
+
+func TestUpgradeCmd_YesBypassesSelector(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "npm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg-a", Name: "pkg-a", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "npm"},
+			{Id: "pkg-b", Name: "pkg-b", Version: "1.0.0", AvailableVersion: "1.1.0", ManagerName: "npm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Selector would fail/cancel if invoked
+	SetDefaultSelectorForTest(&MockMultiSelector{Err: ErrSelectionCanceled})
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--yes", "--no-refresh"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected upgrade --yes to succeed without invoking selector, got: %v", err)
+	}
+
+	if len(mockMgr.upgradedIDs) != 2 {
+		t.Errorf("expected both packages upgraded with --yes, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_PoliciesChangelogAndConcurrency(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			Level:   "minor",
+			Exclude: []string{"cargo:*skip*"},
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	npmMgr := &mockUpgradeManager{
+		name: "npm",
+		updates: []pm.PackageUpdate{
+			{Id: "eslint", Name: "eslint", Version: "8.0.0", AvailableVersion: "9.0.0", ManagerName: "npm"},    // major -> skipped
+			{Id: "prettier", Name: "prettier", Version: "3.0.0", AvailableVersion: "3.1.0", ManagerName: "npm"}, // minor -> allowed
+		},
+	}
+	cargoMgr := &mockUpgradeManager{
+		name: "cargo",
+		updates: []pm.PackageUpdate{
+			{Id: "skip-me", Name: "skip-me", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "cargo"}, // excluded -> skipped
+			{Id: "ripgrep", Name: "ripgrep", Version: "14.0.0", AvailableVersion: "14.0.1", ManagerName: "cargo"}, // patch -> allowed
+		},
+	}
+	registryOverride = pm.NewRegistry(npmMgr, cargoMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// 1. Dry-run with --yes, --changelog, and config defaults
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "-y", "--dry-run", "--changelog", "--no-refresh"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "=== Changelog Preview ===") || !strings.Contains(out, "https://www.npmjs.com/package/prettier") {
+		t.Errorf("expected changelog preview in dry-run output:\n%s", out)
+	}
+	if !strings.Contains(out, "Skipped (level)") || !strings.Contains(out, "Skipped (excluded)") {
+		t.Errorf("expected policy skip statuses in summary:\n%s", out)
+	}
+	if len(npmMgr.upgradedIDs) != 0 || len(cargoMgr.upgradedIDs) != 0 {
+		t.Errorf("expected no upgrades in dry-run")
+	}
+
+	// 2. Actual execution with -y -j 2 --json
+	stdout.Reset()
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&stdout)
+	cmd2.SetErr(&stderr)
+	cmd2.SetArgs([]string{"upgrade", "-y", "-j", "2", "--json", "--no-refresh"})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("upgrade -y -j 2 --json failed: %v", err)
+	}
+
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("unmarshal json: %v\n%s", err, stdout.String())
+	}
+	if summary.Succeeded != 2 || summary.Skipped != 2 || summary.Total != 4 {
+		t.Errorf("unexpected summary counts: %+v", summary)
+	}
+	if len(npmMgr.upgradedIDs) != 1 || npmMgr.upgradedIDs[0] != "prettier" {
+		t.Errorf("expected only prettier upgraded for npm, got %v", npmMgr.upgradedIDs)
+	}
+	if len(cargoMgr.upgradedIDs) != 1 || cargoMgr.upgradedIDs[0] != "ripgrep" {
+		t.Errorf("expected only ripgrep upgraded for cargo, got %v", cargoMgr.upgradedIDs)
+	}
+}

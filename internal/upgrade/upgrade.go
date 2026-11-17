@@ -1,11 +1,13 @@
 package upgrade
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -17,11 +19,13 @@ import (
 type Status string
 
 const (
-	StatusSucceeded     Status = "Succeeded"
-	StatusFailed        Status = "Failed"
-	StatusSkipped       Status = "Skipped"
-	StatusSkippedPinned Status = "Skipped (pinned)"
-	StatusDryRun        Status = "Dry-Run"
+	StatusSucceeded       Status = "Succeeded"
+	StatusFailed          Status = "Failed"
+	StatusSkipped         Status = "Skipped"
+	StatusSkippedPinned   Status = "Skipped (pinned)"
+	StatusSkippedExcluded Status = "Skipped (excluded)"
+	StatusSkippedLevel    Status = "Skipped (level)"
+	StatusDryRun          Status = "Dry-Run"
 )
 
 // Result captures the outcome of an upgrade attempt.
@@ -194,9 +198,11 @@ func FilterPins(pkgs []pm.PackageUpdate, ignorePins bool) (allowed []pm.PackageU
 
 // Executor coordinates package upgrades using managers from the registry.
 type Executor struct {
-	Registry *pm.Registry
-	Stdout   io.Writer
-	Stderr   io.Writer
+	Registry    *pm.Registry
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Stdin       io.Reader
+	Concurrency int
 }
 
 // NewExecutor creates a new Executor with specified registry and I/O streams.
@@ -214,7 +220,21 @@ func NewExecutor(reg *pm.Registry, stdout, stderr io.Writer) *Executor {
 	}
 }
 
-// Execute runs all targets in the plan, applying BulkUpgrader batching when supported.
+type indexedTarget struct {
+	origIdx int
+	pkg     pm.PackageUpdate
+}
+
+type managerGroup struct {
+	key   string
+	items []indexedTarget
+}
+
+// Execute runs all targets in the plan, executing distinct non-deferred managers in parallel
+// (bounded by Concurrency when > 0; 1 = serial; <= 0 = parallel across all managers),
+// keeping execution within each manager sequential (preserving BulkUpgrader/DetailedBulkUpgrader),
+// buffering per-manager output so logs never interleave, preserving plan.Targets order in Summary.Results,
+// and running deferred packages in Phase 2 after all non-deferred managers finish.
 func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 	var results []Result
 	if plan != nil {
@@ -224,71 +244,181 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 		return NewSummary(results)
 	}
 
-	pkgs := plan.Targets
-	for i := 0; i < len(pkgs); i++ {
-		pkg := pkgs[i]
-		mgr, exists := e.Registry.GetManager(pkg.ManagerName)
+	stdout := e.Stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	stderr := e.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+
+	phase1Map := make(map[string]int)
+	var phase1Groups []managerGroup
+	phase2Map := make(map[string]int)
+	var phase2Groups []managerGroup
+
+	for i, pkg := range plan.Targets {
+		mgrKey := strings.ToLower(strings.TrimSpace(pkg.ManagerName))
+		if e.Registry != nil {
+			if mgr, ok := e.Registry.GetManager(pkg.ManagerName); ok {
+				mgrKey = strings.ToLower(mgr.Name())
+			}
+		}
+
+		deferred := e.Registry != nil && e.Registry.ShouldDefer(pkg)
+		if deferred {
+			idx, exists := phase2Map[mgrKey]
+			if !exists {
+				idx = len(phase2Groups)
+				phase2Map[mgrKey] = idx
+				phase2Groups = append(phase2Groups, managerGroup{key: mgrKey})
+			}
+			phase2Groups[idx].items = append(phase2Groups[idx].items, indexedTarget{origIdx: i, pkg: pkg})
+		} else {
+			idx, exists := phase1Map[mgrKey]
+			if !exists {
+				idx = len(phase1Groups)
+				phase1Map[mgrKey] = idx
+				phase1Groups = append(phase1Groups, managerGroup{key: mgrKey})
+			}
+			phase1Groups[idx].items = append(phase1Groups[idx].items, indexedTarget{origIdx: i, pkg: pkg})
+		}
+	}
+
+	targetResults := make([]Result, len(plan.Targets))
+
+	// Phase 1: Non-deferred managers
+	if len(phase1Groups) > 0 {
+		if e.Concurrency == 1 || len(phase1Groups) == 1 {
+			for _, g := range phase1Groups {
+				e.executeManagerGroup(ctx, g.items, stdout, stderr, stdout, stderr, targetResults)
+			}
+		} else {
+			limit := len(phase1Groups)
+			if e.Concurrency > 0 && e.Concurrency < limit {
+				limit = e.Concurrency
+			}
+			sem := make(chan struct{}, limit)
+			var wg sync.WaitGroup
+			var ioMu sync.Mutex
+
+			for _, g := range phase1Groups {
+				wg.Add(1)
+				go func(grp managerGroup) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+
+					var outBuf, errBuf bytes.Buffer
+					e.executeManagerGroup(ctx, grp.items, &outBuf, &errBuf, stdout, stderr, targetResults)
+
+					ioMu.Lock()
+					defer ioMu.Unlock()
+					if outBuf.Len() > 0 {
+						_, _ = outBuf.WriteTo(stdout)
+					}
+					if errBuf.Len() > 0 {
+						_, _ = errBuf.WriteTo(stderr)
+					}
+				}(g)
+			}
+			wg.Wait()
+		}
+	}
+
+	// Phase 2: Deferred packages run sequentially after all non-deferred managers finish
+	for _, g := range phase2Groups {
+		e.executeManagerGroup(ctx, g.items, stdout, stderr, stdout, stderr, targetResults)
+	}
+
+	results = append(results, targetResults...)
+	return NewSummary(results)
+}
+
+func (e *Executor) executeManagerGroup(
+	ctx context.Context,
+	items []indexedTarget,
+	out io.Writer,
+	errOut io.Writer,
+	restoreOut io.Writer,
+	restoreErr io.Writer,
+	targetResults []Result,
+) {
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		pkg := item.pkg
+
+		var mgr pm.Manager
+		var exists bool
+		if e.Registry != nil {
+			mgr, exists = e.Registry.GetManager(pkg.ManagerName)
+		}
 		if !exists {
-			fmt.Fprintf(e.Stderr, "Error: package manager %q not registered for package %s\n", pkg.ManagerName, pkg.Id)
-			results = append(results, Result{
+			fmt.Fprintf(errOut, "Error: package manager %q not registered for package %s\n", pkg.ManagerName, pkg.Id)
+			targetResults[item.origIdx] = Result{
 				Package: pkg,
 				Status:  StatusFailed,
 				Error:   fmt.Errorf("manager %q not registered", pkg.ManagerName),
-			})
+			}
 			continue
 		}
 
+		if ioCfg, ok := mgr.(pm.IOConfigurable); ok {
+			ioCfg.SetIO(e.Stdin, out, errOut)
+		}
+
 		if err := mgr.ValidateID(pkg.Id); err != nil {
-			fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", pkg.Id, err)
-			results = append(results, Result{
+			fmt.Fprintf(errOut, "Error upgrading %s: %v\n", pkg.Id, err)
+			targetResults[item.origIdx] = Result{
 				Package: pkg,
 				Status:  StatusFailed,
 				Error:   err,
-			})
+			}
 			continue
 		}
 
 		// Check for DetailedBulkUpgrader first to report per-package results
 		if detailed, ok := mgr.(pm.DetailedBulkUpgrader); ok {
-			var batchPkgs []pm.PackageUpdate
+			var batchItems []indexedTarget
 			var batchIDs []string
 			j := i
-			for ; j < len(pkgs) && strings.EqualFold(pkgs[j].ManagerName, pkg.ManagerName); j++ {
-				if vErr := mgr.ValidateID(pkgs[j].Id); vErr != nil {
+			for ; j < len(items); j++ {
+				if vErr := mgr.ValidateID(items[j].pkg.Id); vErr != nil {
 					break
 				}
-				batchPkgs = append(batchPkgs, pkgs[j])
-				batchIDs = append(batchIDs, pkgs[j].Id)
+				batchItems = append(batchItems, items[j])
+				batchIDs = append(batchIDs, items[j].pkg.Id)
 			}
-			if len(batchPkgs) > 1 {
-				fmt.Fprintf(e.Stdout, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
+			if len(batchItems) > 1 {
+				fmt.Fprintf(out, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
 				start := time.Now()
 				bulkResults, err := detailed.UpgradePackagesDetailed(ctx, batchIDs)
-				dur := time.Since(start) / time.Duration(len(batchPkgs))
+				dur := time.Since(start) / time.Duration(len(batchItems))
 				if err != nil && len(bulkResults) == 0 {
-					for _, bp := range batchPkgs {
-						fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", bp.Id, err)
-						results = append(results, Result{
-							Package:  bp,
+					for _, bi := range batchItems {
+						fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
+						targetResults[bi.origIdx] = Result{
+							Package:  bi.pkg,
 							Status:   StatusFailed,
 							Duration: dur,
 							Error:    err,
-						})
+						}
 					}
 				} else {
 					resMap := make(map[string]pm.BulkPackageResult)
 					for _, br := range bulkResults {
 						resMap[strings.ToLower(br.ID)] = br
 					}
-					for _, bp := range batchPkgs {
-						br, found := resMap[strings.ToLower(bp.Id)]
+					for _, bi := range batchItems {
+						br, found := resMap[strings.ToLower(bi.pkg.Id)]
 						if found && br.Succeeded {
-							fmt.Fprintf(e.Stdout, "Successfully upgraded %s\n", bp.Id)
-							results = append(results, Result{
-								Package:  bp,
+							fmt.Fprintf(out, "Successfully upgraded %s\n", bi.pkg.Id)
+							targetResults[bi.origIdx] = Result{
+								Package:  bi.pkg,
 								Status:   StatusSucceeded,
 								Duration: dur,
-							})
+							}
 						} else {
 							pkgErr := err
 							if found && br.Error != nil {
@@ -296,13 +426,13 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 							} else if pkgErr == nil {
 								pkgErr = fmt.Errorf("package upgrade failed")
 							}
-							fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", bp.Id, pkgErr)
-							results = append(results, Result{
-								Package:  bp,
+							fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, pkgErr)
+							targetResults[bi.origIdx] = Result{
+								Package:  bi.pkg,
 								Status:   StatusFailed,
 								Duration: dur,
 								Error:    pkgErr,
-							})
+							}
 						}
 					}
 				}
@@ -313,37 +443,37 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 
 		// Fallback for standard BulkUpgrader
 		if bulk, ok := mgr.(pm.BulkUpgrader); ok {
-			var batchPkgs []pm.PackageUpdate
+			var batchItems []indexedTarget
 			var batchIDs []string
 			j := i
-			for ; j < len(pkgs) && strings.EqualFold(pkgs[j].ManagerName, pkg.ManagerName); j++ {
-				if vErr := mgr.ValidateID(pkgs[j].Id); vErr != nil {
+			for ; j < len(items); j++ {
+				if vErr := mgr.ValidateID(items[j].pkg.Id); vErr != nil {
 					break
 				}
-				batchPkgs = append(batchPkgs, pkgs[j])
-				batchIDs = append(batchIDs, pkgs[j].Id)
+				batchItems = append(batchItems, items[j])
+				batchIDs = append(batchIDs, items[j].pkg.Id)
 			}
-			if len(batchPkgs) > 1 {
-				fmt.Fprintf(e.Stdout, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
+			if len(batchItems) > 1 {
+				fmt.Fprintf(out, "\n--- Upgrading %d packages (%s): %s ---\n", len(batchIDs), mgr.Name(), strings.Join(batchIDs, ", "))
 				start := time.Now()
 				err := bulk.UpgradePackages(ctx, batchIDs)
-				dur := time.Since(start) / time.Duration(len(batchPkgs))
-				for _, bp := range batchPkgs {
+				dur := time.Since(start) / time.Duration(len(batchItems))
+				for _, bi := range batchItems {
 					if err != nil {
-						fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", bp.Id, err)
-						results = append(results, Result{
-							Package:  bp,
+						fmt.Fprintf(errOut, "Error upgrading %s: %v\n", bi.pkg.Id, err)
+						targetResults[bi.origIdx] = Result{
+							Package:  bi.pkg,
 							Status:   StatusFailed,
 							Duration: dur,
 							Error:    err,
-						})
+						}
 					} else {
-						fmt.Fprintf(e.Stdout, "Successfully upgraded %s\n", bp.Id)
-						results = append(results, Result{
-							Package:  bp,
+						fmt.Fprintf(out, "Successfully upgraded %s\n", bi.pkg.Id)
+						targetResults[bi.origIdx] = Result{
+							Package:  bi.pkg,
 							Status:   StatusSucceeded,
 							Duration: dur,
-						})
+						}
 					}
 				}
 				i = j - 1
@@ -351,27 +481,34 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) Summary {
 			}
 		}
 
-		fmt.Fprintf(e.Stdout, "\n--- Upgrading: %s (%s) ---\n", pkg.Id, pkg.ManagerName)
+		fmt.Fprintf(out, "\n--- Upgrading: %s (%s) ---\n", pkg.Id, pkg.ManagerName)
 		start := time.Now()
 		err := mgr.UpgradePackage(ctx, pkg.Id)
 		dur := time.Since(start)
 		if err != nil {
-			fmt.Fprintf(e.Stderr, "Error upgrading %s: %v\n", pkg.Id, err)
-			results = append(results, Result{
+			fmt.Fprintf(errOut, "Error upgrading %s: %v\n", pkg.Id, err)
+			targetResults[item.origIdx] = Result{
 				Package:  pkg,
 				Status:   StatusFailed,
 				Duration: dur,
 				Error:    err,
-			})
+			}
 		} else {
-			fmt.Fprintf(e.Stdout, "Successfully upgraded %s\n", pkg.Id)
-			results = append(results, Result{
+			fmt.Fprintf(out, "Successfully upgraded %s\n", pkg.Id)
+			targetResults[item.origIdx] = Result{
 				Package:  pkg,
 				Status:   StatusSucceeded,
 				Duration: dur,
-			})
+			}
 		}
 	}
 
-	return NewSummary(results)
+	// Restore original registry streams if IOConfigurable was redirected to buffers.
+	if len(items) > 0 && e.Registry != nil {
+		if mgr, ok := e.Registry.GetManager(items[0].pkg.ManagerName); ok {
+			if ioCfg, ok := mgr.(pm.IOConfigurable); ok {
+				ioCfg.SetIO(e.Stdin, restoreOut, restoreErr)
+			}
+		}
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/upgrade"
+	semver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,11 @@ type upgradeOptions struct {
 	noRefresh        bool
 	offline          bool
 	timeout          time.Duration
+	exclude          []string
+	level            string
+	changelog        bool
+	yes              bool
+	concurrency      int
 }
 
 type upgradeResult struct {
@@ -93,8 +99,8 @@ func newUpgradeCmd() *cobra.Command {
 		Long:              `Upgrade one or more specific packages by providing their IDs, or upgrade all packages using the --all flag.`,
 		ValidArgsFunction: completeAvailablePackageIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.json && !opts.all && len(args) == 0 {
-				return exitcodes.New(exitcodes.ExitGeneralError, "--json requires either --all or explicit package IDs (interactive selection is disabled in JSON mode)")
+			if opts.json && !opts.all && !opts.yes && len(args) == 0 {
+				return exitcodes.New(exitcodes.ExitGeneralError, "--json requires either --all or explicit package IDs (interactive selection is disabled in JSON mode; or pass --yes)")
 			}
 			if opts.all && len(args) > 0 {
 				return fmt.Errorf("--all and a package ID are mutually exclusive")
@@ -127,6 +133,15 @@ func newUpgradeCmd() *cobra.Command {
 				if !cmd.Flags().Changed("no-refresh") && cfg.Defaults.NoRefresh != nil {
 					opts.noRefresh = *cfg.Defaults.NoRefresh
 				}
+				if !cmd.Flags().Changed("level") && cfg.Defaults.Level != "" {
+					opts.level = cfg.Defaults.Level
+				}
+				if !cmd.Flags().Changed("exclude") && len(cfg.Defaults.Exclude) > 0 {
+					opts.exclude = append([]string(nil), cfg.Defaults.Exclude...)
+				}
+			}
+			if _, err := semver.ParseLevel(opts.level); err != nil {
+				return err
 			}
 			registry.ConfigureOptions(pm.UpgradeOptions{
 				AcceptAgreements: opts.acceptAgreements,
@@ -146,7 +161,7 @@ func newUpgradeCmd() *cobra.Command {
 
 			var plan *upgrade.Plan
 
-			if opts.all {
+			if opts.all || (opts.yes && len(args) == 0) {
 				var filter []string
 				if opts.manager != "" {
 					mgr, exists := registry.GetManager(opts.manager)
@@ -174,16 +189,24 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "Warning: %v\n", w)
 				}
 
-				allowed, skipped, err := upgrade.FilterPins(updates, ignorePins)
+				allowed, pinSkipped, err := upgrade.FilterPins(updates, ignorePins)
 				if err != nil {
 					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
 				}
+				allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+				if err != nil {
+					return err
+				}
+				skipped := append(pinSkipped, policySkipped...)
 				if len(allowed) == 0 {
 					if opts.json {
 						emptySummary := upgrade.NewSummary(skipped)
-						return emptySummary.RenderJSON(out, false)
+						return emptySummary.RenderJSON(out, opts.dryRun)
 					}
-					if len(skipped) > 0 {
+					if len(policySkipped) > 0 {
+						fmt.Fprintf(out, "No packages to upgrade (%d package(s) skipped by pins or policies).\n", len(skipped))
+						upgrade.NewSummary(skipped).Render(out)
+					} else if len(skipped) > 0 {
 						fmt.Fprintf(out, "No packages to upgrade (%d pinned package(s) skipped).\n", len(skipped))
 					} else {
 						fmt.Fprintln(out, "All packages are up to date.")
@@ -204,20 +227,28 @@ func newUpgradeCmd() *cobra.Command {
 					for _, packageId := range args {
 						pkgs = append(pkgs, pm.PackageUpdate{Name: packageId, Id: packageId, ManagerName: mgr.Name()})
 					}
-					allowed, skipped, err := upgrade.FilterPins(pkgs, ignorePins)
+					allowed, pinSkipped, err := upgrade.FilterPins(pkgs, ignorePins)
 					if err != nil {
 						return err
 					}
-					for _, sr := range skipped {
+					for _, sr := range pinSkipped {
 						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
 					}
+					allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+					if err != nil {
+						return err
+					}
+					skipped := append(pinSkipped, policySkipped...)
 					if len(allowed) == 0 {
 						if opts.json {
-							_ = upgrade.NewSummary(skipped).RenderJSON(out, false)
+							_ = upgrade.NewSummary(skipped).RenderJSON(out, opts.dryRun)
 						} else {
 							upgrade.NewSummary(skipped).Render(out)
 						}
-						return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
+						if len(pinSkipped) > 0 && len(policySkipped) == 0 {
+							return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
+						}
+						return nil
 					}
 					plan = upgrade.NewPlan(registry, allowed, skipped)
 				} else {
@@ -267,14 +298,22 @@ func newUpgradeCmd() *cobra.Command {
 					for _, sr := range pinnedSkipped {
 						fmt.Fprintf(errOut, "Warning: package %q is pinned; skipping (pass --include-pinned or --force to override)\n", sr.Package.Id)
 					}
+					allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+					if err != nil {
+						return err
+					}
 					allSkipped := append(notFoundSkipped, pinnedSkipped...)
+					allSkipped = append(allSkipped, policySkipped...)
 					if len(allowed) == 0 {
 						if opts.json {
-							_ = upgrade.NewSummary(allSkipped).RenderJSON(out, false)
+							_ = upgrade.NewSummary(allSkipped).RenderJSON(out, opts.dryRun)
 						} else {
 							upgrade.NewSummary(allSkipped).Render(out)
 						}
-						return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
+						if len(pinnedSkipped) > 0 && len(policySkipped) == 0 {
+							return fmt.Errorf("package %q is pinned (use --force or --include-pinned to upgrade)", strings.Join(args, ", "))
+						}
+						return nil
 					}
 					plan = upgrade.NewPlan(registry, allowed, allSkipped)
 				}
@@ -303,13 +342,21 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "Warning: %v\n", w)
 				}
 
-				allowed, skipped, err := upgrade.FilterPins(updates, ignorePins)
+				allowed, pinSkipped, err := upgrade.FilterPins(updates, ignorePins)
 				if err != nil {
 					return fmt.Errorf("cannot verify pinned packages: %w (use --force or --include-pinned to override)", err)
 				}
+				allowed, policySkipped, err := upgrade.FilterPolicies(allowed, opts.exclude, opts.level)
+				if err != nil {
+					return err
+				}
+				allSkipped := append(pinSkipped, policySkipped...)
 				if len(allowed) == 0 {
-					if len(skipped) > 0 {
-						fmt.Fprintf(out, "No updates available (%d pinned package(s) skipped).\n", len(skipped))
+					if len(policySkipped) > 0 {
+						fmt.Fprintf(out, "No updates available (%d package(s) skipped by pins or policies).\n", len(allSkipped))
+						upgrade.NewSummary(allSkipped).Render(out)
+					} else if len(pinSkipped) > 0 {
+						fmt.Fprintf(out, "No updates available (%d pinned package(s) skipped).\n", len(pinSkipped))
 					} else {
 						fmt.Fprintln(out, "No updates available.")
 					}
@@ -375,7 +422,7 @@ func newUpgradeCmd() *cobra.Command {
 					return exitcodes.Wrap(exitcodes.ExitCanceled, ErrSelectionCanceled)
 				}
 
-				plan = upgrade.NewPlan(registry, selectedPackages, nil)
+				plan = upgrade.NewPlan(registry, selectedPackages, allSkipped)
 			}
 
 			if plan == nil || plan.IsEmpty() {
@@ -384,6 +431,9 @@ func newUpgradeCmd() *cobra.Command {
 
 			if !opts.json {
 				maybePrintWingetAgreementsNotice(out, plan.Targets, opts.acceptAgreements)
+				if opts.changelog {
+					upgrade.RenderChangelogPreview(out, plan.Targets)
+				}
 			}
 
 			if opts.dryRun {
@@ -399,7 +449,7 @@ func newUpgradeCmd() *cobra.Command {
 					for _, u := range plan.Targets {
 						fmt.Fprintf(out, "[Dry Run] Would upgrade package %s (%s -> %s) using %s.\n", u.Id, u.Version, u.AvailableVersion, u.ManagerName)
 					}
-				} else if opts.all {
+				} else if opts.all || opts.yes {
 					fmt.Fprintf(out, "[Dry Run] Would upgrade %d package(s):\n", len(plan.Targets))
 				} else {
 					fmt.Fprintf(out, "\n[Dry Run] Would upgrade %d selected package(s):\n", len(plan.Targets))
@@ -412,13 +462,15 @@ func newUpgradeCmd() *cobra.Command {
 			if opts.json {
 				execOut = io.Discard
 			} else {
-				if opts.all || len(args) > 0 {
+				if opts.all || opts.yes || len(args) > 0 {
 					fmt.Fprintf(out, "\nUpgrading %d package(s)...\n", len(plan.Targets))
 				} else {
 					fmt.Fprintf(out, "\nUpgrading %d packages...\n", len(plan.Targets))
 				}
 			}
 			executor := upgrade.NewExecutor(registry, execOut, errOut)
+			executor.Stdin = cmd.InOrStdin()
+			executor.Concurrency = opts.concurrency
 			summary := executor.Execute(cmd.Context(), plan)
 			if opts.json {
 				jsonErr := summary.RenderJSON(out, false)
@@ -447,7 +499,15 @@ func newUpgradeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.noRefresh, "no-refresh", false, "Skip bucket/repository refresh before checking updates")
 	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access and upgrade using only local caches")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-manager timeout when querying updates (0 uses manager defaults)")
+	cmd.Flags().StringSliceVar(&opts.exclude, "exclude", nil, "Exclude packages matching glob pattern (comma-separated or repeatable)")
+	cmd.Flags().StringVar(&opts.level, "level", "", "Maximum semver bump level to upgrade (patch, minor, major)")
+	cmd.Flags().BoolVar(&opts.changelog, "changelog", false, "Display changelog/release preview URLs before upgrading")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip interactive selection and confirm upgrading all eligible updates")
+	cmd.Flags().IntVarP(&opts.concurrency, "concurrency", "j", 0, "Maximum number of package managers to upgrade in parallel (0 = all managers, 1 = serial)")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
+	_ = cmd.RegisterFlagCompletionFunc("level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"patch", "minor", "major"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }

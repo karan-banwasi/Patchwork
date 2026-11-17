@@ -16,10 +16,12 @@ import (
 
 // DefaultsConfig represents default command-line flags configured persistently by the user.
 type DefaultsConfig struct {
-	Timeout          string `json:"timeout,omitempty"`
-	AcceptAgreements *bool  `json:"accept_agreements,omitempty"`
-	TrustRepository  *bool  `json:"trust_repository,omitempty"`
-	NoRefresh        *bool  `json:"no_refresh,omitempty"`
+	Timeout          string   `json:"timeout,omitempty"`
+	AcceptAgreements *bool    `json:"accept_agreements,omitempty"`
+	TrustRepository  *bool    `json:"trust_repository,omitempty"`
+	NoRefresh        *bool    `json:"no_refresh,omitempty"`
+	Level            string   `json:"level,omitempty"`
+	Exclude          []string `json:"exclude,omitempty"`
 }
 
 // PinEntry represents a pinned package with optional version constraints, reason, and expiry.
@@ -374,7 +376,7 @@ func (c *Config) SaveTo(path string) error {
 		DisabledManagers: c.DisabledManagers,
 		AcceptAgreements: c.AcceptAgreements,
 	}
-	if c.Defaults.Timeout != "" || c.Defaults.AcceptAgreements != nil || c.Defaults.TrustRepository != nil || c.Defaults.NoRefresh != nil {
+	if c.Defaults.Timeout != "" || c.Defaults.AcceptAgreements != nil || c.Defaults.TrustRepository != nil || c.Defaults.NoRefresh != nil || c.Defaults.Level != "" || len(c.Defaults.Exclude) > 0 {
 		out.Defaults = &c.Defaults
 	}
 	if c.hasRichPins() {
@@ -586,6 +588,8 @@ var SupportedKeys = []string{
 	"defaults.accept_agreements",
 	"defaults.trust_repository",
 	"defaults.no_refresh",
+	"defaults.level",
+	"defaults.exclude",
 	"disabled_managers",
 	"accept_agreements",
 	"pins",
@@ -622,6 +626,10 @@ func (c *Config) Get(key string) (any, error) {
 			return *c.Defaults.NoRefresh, nil
 		}
 		return nil, nil
+	case "defaults.level":
+		return c.Defaults.Level, nil
+	case "defaults.exclude":
+		return c.Defaults.Exclude, nil
 	case "defaults":
 		return c.Defaults, nil
 	case "disabled_managers":
@@ -703,6 +711,48 @@ func (c *Config) Set(key string, val any) error {
 			return fmt.Errorf("invalid value for defaults.no_refresh: %w", err)
 		}
 		c.Defaults.NoRefresh = &b
+		return nil
+
+	case "defaults.level":
+		if val == nil {
+			c.Defaults.Level = ""
+			return nil
+		}
+		str := strings.TrimSpace(fmt.Sprint(val))
+		lvl, err := version.ParseLevel(str)
+		if err != nil {
+			return fmt.Errorf("invalid value for defaults.level: %w", err)
+		}
+		c.Defaults.Level = string(lvl)
+		return nil
+
+	case "defaults.exclude":
+		if val == nil {
+			c.Defaults.Exclude = nil
+			return nil
+		}
+		var list []string
+		switch v := val.(type) {
+		case []string:
+			for _, item := range v {
+				trimmed := strings.TrimSpace(item)
+				if trimmed != "" {
+					list = append(list, trimmed)
+				}
+			}
+		case string:
+			if strings.TrimSpace(v) != "" {
+				for _, part := range strings.Split(v, ",") {
+					part = strings.TrimSpace(part)
+					if part != "" {
+						list = append(list, part)
+					}
+				}
+			}
+		default:
+			return fmt.Errorf("invalid defaults.exclude value: expected string or list of strings, got %T", val)
+		}
+		c.Defaults.Exclude = list
 		return nil
 
 	case "accept_agreements":

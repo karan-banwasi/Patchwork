@@ -422,3 +422,73 @@ func TestConfig_GetSetValidation(t *testing.T) {
 		t.Errorf("expected error getting unknown key")
 	}
 }
+
+func TestConfig_DefaultsLevelAndExclude(t *testing.T) {
+	cfg := &Config{}
+
+	// Verify SupportedKeys includes defaults.level and defaults.exclude
+	hasLevel, hasExclude := false, false
+	for _, k := range SupportedKeys {
+		if k == "defaults.level" {
+			hasLevel = true
+		}
+		if k == "defaults.exclude" {
+			hasExclude = true
+		}
+	}
+	if !hasLevel || !hasExclude {
+		t.Fatalf("SupportedKeys missing defaults.level (%v) or defaults.exclude (%v)", hasLevel, hasExclude)
+	}
+
+	// Set and Get defaults.level (case-insensitive normalization)
+	if err := cfg.Set("defaults.level", "MINOR"); err != nil {
+		t.Fatalf("Set defaults.level failed: %v", err)
+	}
+	val, err := cfg.Get("defaults.level")
+	if err != nil || val != "minor" {
+		t.Errorf("expected defaults.level=minor, got val=%v, err=%v", val, err)
+	}
+	if err := cfg.Set("defaults.level", "invalid-level"); err == nil {
+		t.Errorf("expected error for invalid defaults.level")
+	}
+
+	// Set and Get defaults.exclude (comma-separated string and slice)
+	if err := cfg.Set("defaults.exclude", "npm:*, Microsoft.* , *beta*"); err != nil {
+		t.Fatalf("Set defaults.exclude failed: %v", err)
+	}
+	val, err = cfg.Get("defaults.exclude")
+	if err != nil {
+		t.Fatalf("Get defaults.exclude failed: %v", err)
+	}
+	excl, ok := val.([]string)
+	if !ok || len(excl) != 3 || excl[0] != "npm:*" || excl[1] != "Microsoft.*" || excl[2] != "*beta*" {
+		t.Errorf("unexpected defaults.exclude value: %#v", val)
+	}
+
+	// SaveTo and LoadFrom persistence when only level and exclude are set
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo failed: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom failed: %v", err)
+	}
+	if loaded.Defaults.Level != "minor" {
+		t.Errorf("expected persisted Defaults.Level=minor, got %q", loaded.Defaults.Level)
+	}
+	if len(loaded.Defaults.Exclude) != 3 || loaded.Defaults.Exclude[0] != "npm:*" {
+		t.Errorf("expected persisted Defaults.Exclude, got %#v", loaded.Defaults.Exclude)
+	}
+
+	// Clear level and exclude
+	if err := loaded.Set("defaults.level", ""); err != nil {
+		t.Fatalf("clearing defaults.level failed: %v", err)
+	}
+	if err := loaded.Set("defaults.exclude", []string{}); err != nil {
+		t.Fatalf("clearing defaults.exclude failed: %v", err)
+	}
+	if loaded.Defaults.Level != "" || len(loaded.Defaults.Exclude) != 0 {
+		t.Errorf("expected cleared level and exclude, got %+v", loaded.Defaults)
+	}
+}

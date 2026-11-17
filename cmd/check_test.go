@@ -328,3 +328,83 @@ func TestCheckCmd_DefaultsAndDisabledManagers(t *testing.T) {
 		t.Errorf("expected disabled manager error, got: %v", err)
 	}
 }
+
+func TestCheckCmd_PoliciesAndChangelog(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			Level:   "minor",
+			Exclude: []string{"npm:*skip*"},
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	npmMgr := &mockCheckManager{
+		name: "npm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg-patch", Name: "pkg-patch", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "npm"},
+			{Id: "pkg-minor", Name: "pkg-minor", Version: "1.0.0", AvailableVersion: "1.1.0", ManagerName: "npm"},
+			{Id: "pkg-major", Name: "pkg-major", Version: "1.0.0", AvailableVersion: "2.0.0", ManagerName: "npm"},
+			{Id: "pkg-skip", Name: "pkg-skip", Version: "1.0.0", AvailableVersion: "1.0.2", ManagerName: "npm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(npmMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// 1. Config defaults apply (level=minor, exclude=npm:*skip*) + --changelog
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"check", "--no-refresh", "--changelog"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("check failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "pkg-patch") || !strings.Contains(out, "pkg-minor") {
+		t.Errorf("expected patch and minor updates in output:\n%s", out)
+	}
+	if strings.Contains(out, "pkg-major") || strings.Contains(out, "pkg-skip") {
+		t.Errorf("expected major and excluded packages filtered out:\n%s", out)
+	}
+	if !strings.Contains(out, "=== Changelog Preview ===") || !strings.Contains(out, "https://www.npmjs.com/package/pkg-patch") {
+		t.Errorf("expected changelog preview URLs in output:\n%s", out)
+	}
+
+	// 2. CLI flags override defaults (--level patch --exclude "")
+	stdout.Reset()
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&stdout)
+	cmd2.SetErr(&stderr)
+	cmd2.SetArgs([]string{"check", "--no-refresh", "--level", "patch", "--exclude", "", "--json", "--changelog"})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("check json failed: %v", err)
+	}
+	var parsed struct {
+		Count   int `json:"count"`
+		Updates []struct {
+			ID           string `json:"id"`
+			ChangelogURL string `json:"changelog_url"`
+		} `json:"updates"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if parsed.Count != 2 {
+		t.Fatalf("expected 2 patch updates (pkg-patch, pkg-skip), got %d: %+v", parsed.Count, parsed.Updates)
+	}
+	if parsed.Updates[0].ChangelogURL == "" {
+		t.Errorf("expected changelog_url populated in JSON when --changelog set")
+	}
+
+	// 3. Invalid --level fails fast
+	cmd3 := NewRootCmd()
+	cmd3.SetArgs([]string{"check", "--level", "bogus"})
+	if err := cmd3.Execute(); err == nil {
+		t.Errorf("expected error for invalid --level")
+	}
+}
