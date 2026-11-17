@@ -98,3 +98,33 @@ SignPath provides free code signing certificates from a trusted public CA for op
           wait-for-completion: true
           output-artifact-directory: './signed'
 ```
+
+---
+
+## Windows Application Control / Smart App Control Blocks
+
+When prebuilt GitHub release binaries (`pw.exe` / `pw-arm64.exe`) are downloaded onto a Windows PC with **Smart App Control**, **Windows Defender Application Control (WDAC)**, or **AppLocker** enforcing code integrity or path restrictions, PowerShell may report:
+
+```text
+ResourceUnavailable: Program 'pw.exe' failed to run: An error occurred trying to start process
+'...\pw.exe' with working directory '...'. An Application Control policy has blocked this file.
+```
+
+### Why This Happens
+- **Unsigned PE Binary**: Until a public Authenticode certificate is configured in CI (`AZURE_CLIENT_ID` / `SIGNPATH_API_TOKEN`), release executables carry GitHub/Sigstore attestations and `SHA256SUMS`, not a Microsoft-trusted PE Authenticode signature. Windows 11 Smart App Control blocks unsigned binaries downloaded from the internet.
+- **User-Writable Install Location**: Enterprise WDAC/AppLocker policies often disallow executing binaries under `%LOCALAPPDATA%` (`C:\Users\<user>\AppData\Local\Programs\Patchwork\bin`), allowing execution only from trusted system directories such as `$env:ProgramFiles` or from locally trusted publishers.
+
+### Local Remediation Options
+1. **Unblock Mark-of-the-Web**: `install.ps1` automatically calls `Unblock-File` on the installed binary.
+2. **Self-Sign & Locally Trust the Binary (Administrator PowerShell)**:
+   ```powershell
+   irm https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.ps1 -OutFile install.ps1
+   .\install.ps1 -SelfSign
+   ```
+   `-SelfSign` creates (or reuses) a `CN=Patchwork Local Code Signing` certificate in `Cert:\LocalMachine\My`, trusts it in `LocalMachine\Root` and `LocalMachine\TrustedPublisher`, and Authenticode-signs `pw.exe`.
+3. **Install Under Program Files (Corporate WDAC/AppLocker)**:
+   ```powershell
+   irm https://raw.githubusercontent.com/karan-banwasi/Patchwork/main/install.ps1 -OutFile install.ps1
+   .\install.ps1 -InstallDir "$env:ProgramFiles\Patchwork\bin" -SelfSign
+   ```
+4. **Smart App Control Note**: Note that WDAC policies enforced at kernel level still require disabling or adjusting **Windows Security -> App & browser control -> Smart App Control** if local self-signed certificates are excluded by the policy.

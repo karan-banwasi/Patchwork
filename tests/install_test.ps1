@@ -246,6 +246,22 @@ Assert-Equal "Standalone script reports missing gh error" "$hasNoGhMsg19" "True"
 $noNetwork19 = ($stdout19 -notlike "*Attempting download*") -and ($stdout19 -notlike "*Downloading release*")
 Assert-Equal "Standalone script rejects missing gh before network requests" "$noNetwork19" "True"
 
+# Test 20: Set-LocalCodeSignature helper is exported and requires elevation
+$hasSelfSignFn = [bool](Get-Command Set-LocalCodeSignature -ErrorAction SilentlyContinue)
+Assert-Equal "Set-LocalCodeSignature helper function is defined" "$hasSelfSignFn" "True"
+
+$threw20 = $false
+$errMsg20 = ""
+try {
+    Set-LocalCodeSignature -BinaryPath "dummy.exe" -IsElevated:$false
+} catch {
+    $threw20 = $true
+    $errMsg20 = $_.Exception.Message
+}
+Assert-Equal "Set-LocalCodeSignature throws when not elevated" "$threw20" "True"
+$hasAdminHint20 = $errMsg20 -like "*Administrator*"
+Assert-Equal "Set-LocalCodeSignature non-elevated error mentions Administrator" "$hasAdminHint20" "True"
+
 $resultColor = if ($failCount -eq 0) { 'Green' } else { 'Red' }
 Write-Host "`nTest Results: $passCount passed, $failCount failed." -ForegroundColor $resultColor
 if ($failCount -ne 0) {

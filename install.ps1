@@ -5,7 +5,8 @@ param(
     [string]$Repo = "karan-banwasi/Patchwork",
     [switch]$FunctionsOnly,
     [switch]$SkipAttestation,
-    [switch]$RequireAttestation
+    [switch]$RequireAttestation,
+    [switch]$SelfSign
 )
 
 # Force TLS 1.2 / TLS 1.3 for GitHub compatibility on Windows PowerShell
@@ -119,6 +120,48 @@ function Test-AttestationProvenance {
 
     Write-Host "Verified GitHub build provenance attestation." -ForegroundColor Green
     return $true
+}
+
+function Set-LocalCodeSignature {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BinaryPath,
+        [bool]$IsElevated = (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+    )
+
+    if (-not $IsElevated) {
+        throw "Using -SelfSign requires running PowerShell as Administrator to install and trust a local code-signing certificate."
+    }
+
+    $certSubject = "CN=Patchwork Local Code Signing"
+    $cert = Get-ChildItem -Path "Cert:\LocalMachine\My" -CodeSigningCert -ErrorAction SilentlyContinue |
+        Where-Object { $_.Subject -eq $certSubject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(1) } |
+        Select-Object -First 1
+
+    if (-not $cert) {
+        Write-Host "Creating local code-signing certificate ($certSubject)..." -ForegroundColor Cyan
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $certSubject -CertStoreLocation "Cert:\LocalMachine\My" -NotAfter (Get-Date).AddYears(5)
+    }
+
+    foreach ($storeName in @("Root", "TrustedPublisher")) {
+        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        try {
+            $existing = $store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $cert.Thumbprint, $false)
+            if ($existing.Count -eq 0) {
+                $store.Add($cert)
+            }
+        } finally {
+            $store.Close()
+        }
+    }
+
+    $sig = Set-AuthenticodeSignature -FilePath $BinaryPath -Certificate $cert -HashAlgorithm SHA256
+    if ($sig.Status -ne 'Valid') {
+        throw "Failed to Authenticode-sign '$BinaryPath' (Status: $($sig.Status), Message: $($sig.StatusMessage))."
+    }
+    Write-Host "Locally Authenticode-signed $BinaryPath ($certSubject)." -ForegroundColor Green
 }
 
 # If dot-sourced or called with -FunctionsOnly, return early after defining functions
@@ -265,10 +308,14 @@ try {
     Write-Host "Verified SHA256 checksum ($($actualHash.Substring(0, 12))...)." -ForegroundColor Green
 
     $signerWorkflow = "$repo/.github/workflows/release.yml"
-    Test-AttestationProvenance -BinaryPath $tmpExe -Repo $repo -SignerWorkflow $signerWorkflow `
+    $null = Test-AttestationProvenance -BinaryPath $tmpExe -Repo $repo -SignerWorkflow $signerWorkflow `
         -SkipAttestation:$SkipAttestation -RequireAttestation:$RequireAttestation -HasGh:$hasGh
 
     Move-Item -Path $tmpExe -Destination $exePath -Force
+    Unblock-File -Path $exePath -ErrorAction SilentlyContinue
+    if ($SelfSign) {
+        Set-LocalCodeSignature -BinaryPath $exePath
+    }
     Remove-Item -Path $tmpManifest -Force -ErrorAction SilentlyContinue
     Write-Host "Successfully installed pw.exe to $installDir" -ForegroundColor Green
 } catch {
@@ -323,14 +370,42 @@ if (($cleanUserPath -split ';') -notcontains $installDir) {
     }
 }
 
-Write-Host "`nPatchwork has been installed successfully!" -ForegroundColor Green
-
+$verified = $false
+$verifyErr = ""
 if (Test-Path -Path $exePath) {
     try {
+        $global:LASTEXITCODE = 0
         & $exePath version
+        if ($LASTEXITCODE -eq 0) {
+            $verified = $true
+        } else {
+            $verifyErr = "pw.exe exited with code $LASTEXITCODE"
+        }
     } catch {
-        # Fallback if execution is restricted
+        $verifyErr = $_.Exception.Message
     }
 }
 
+if (-not $verified) {
+    if ($verifyErr -match 'Application Control|blocked this file|AppLocker') {
+        Write-Warning @"
+pw.exe was installed to $installDir, but Windows Application Control (Smart App Control / WDAC / AppLocker) blocked it from running.
+Prebuilt GitHub release binaries are verified via SHA256SUMS and GitHub attestations, but do not yet carry a commercial Microsoft Authenticode signature, or your PC policy may restrict executables in %LOCALAPPDATA%.
+
+To fix this, choose one of the following options:
+  1. Re-run in an Administrator PowerShell to locally trust and Authenticode-sign pw.exe:
+     irm https://raw.githubusercontent.com/$repo/main/install.ps1 -OutFile install.ps1; .\install.ps1 -SelfSign
+  2. If policy blocks %LOCALAPPDATA%, install into Program Files (as Administrator):
+     irm https://raw.githubusercontent.com/$repo/main/install.ps1 -OutFile install.ps1; .\install.ps1 -InstallDir "`$env:ProgramFiles\Patchwork\bin" -SelfSign
+  3. Or adjust Windows Security -> App & browser control -> Smart App Control.
+"@
+    } elseif ($verifyErr) {
+        Write-Warning "pw.exe was installed to $installDir, but failed its startup check: $verifyErr"
+    } else {
+        Write-Warning "pw.exe was not found at $exePath after installation."
+    }
+    exit 1
+}
+
+Write-Host "`nPatchwork has been installed successfully!" -ForegroundColor Green
 Write-Host "Run 'pw --help' or 'pw check' in a new terminal window to get started." -ForegroundColor Cyan
