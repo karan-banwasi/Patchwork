@@ -61,6 +61,7 @@ func NewRootCmd() *cobra.Command {
 		newCompletionCmd(),
 		newVersionCmd(),
 		newSelfUpdateCmd(),
+		newScheduleCmd(),
 	)
 
 	return cmd
