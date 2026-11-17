@@ -119,6 +119,12 @@ type TimeoutProvider interface {
 	FetchTimeout() time.Duration
 }
 
+// Rollbackable is an optional interface implemented by managers that support
+// rolling back a package to a specific target version.
+type Rollbackable interface {
+	RollbackPackage(ctx context.Context, id, targetVersion string) error
+}
+
 // Runner abstracts command execution so managers can be tested without invoking external binaries.
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
@@ -126,6 +132,16 @@ type Runner interface {
 
 // ExecRunner is the default Runner backed by os/exec.
 type ExecRunner struct{}
+
+// IsExecRunner reports whether r is nil or backed by the production ExecRunner.
+func IsExecRunner(r Runner) bool {
+	if r == nil {
+		return true
+	}
+	_, isVal := r.(ExecRunner)
+	_, isPtr := r.(*ExecRunner)
+	return isVal || isPtr
+}
 
 // Run executes an external command with the given streams.
 func (ExecRunner) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {

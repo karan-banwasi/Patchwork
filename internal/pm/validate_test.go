@@ -89,6 +89,12 @@ func TestValidators(t *testing.T) {
 			valid:    []string{"golang.go", "ms-python.python", "esbenp.prettier-vscode"},
 			invalid:  []string{"", "golang", "-golang.go", "golang..go", "golang.go;rm"},
 		},
+		{
+			name:     "Version",
+			validate: ValidateVersion,
+			valid:    []string{"1.0.0", "v2.45.0", "2.55.0.2", "1.2.3-beta.1+build.5", "1:2.0.0~rc1"},
+			invalid:  []string{"", " ", "-1.0.0", "--force", "1.0..0", "1.0.0;rm", "1.0.0 foo", "1.0.0\n"},
+		},
 	}
 
 	for _, tc := range tests {

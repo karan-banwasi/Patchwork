@@ -30,6 +30,7 @@ var (
 	miseIDRe       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]{0,127}$`)
 	asdfIDRe       = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$`)
 	vscodeIDRe     = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.\-_]{0,127}\.[a-zA-Z0-9][a-zA-Z0-9.\-_]{0,127}$`)
+	versionRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_\-~:@]{0,127}$`)
 )
 
 func checkCommonID(id string) error {
@@ -177,6 +178,18 @@ func ValidateAsdfID(id string) error {
 // ValidateVSCodeID validates a VS Code extension identifier (publisher.extension).
 func ValidateVSCodeID(id string) error {
 	return validateWithPattern(id, vscodeIDRe)
+}
+
+// ValidateVersion validates a target version string, rejecting empty values,
+// leading '-' flag-injection attempts, path traversal, and unsafe characters.
+func ValidateVersion(v string) error {
+	if err := checkCommonID(v); err != nil {
+		return fmt.Errorf("invalid version %q: %w", v, err)
+	}
+	if !versionRe.MatchString(v) {
+		return fmt.Errorf("invalid version %q", v)
+	}
+	return nil
 }
 
 // EscapeWindowsArg escapes a command-line argument using Windows CommandLineToArgvW rules

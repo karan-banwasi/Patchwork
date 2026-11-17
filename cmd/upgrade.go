@@ -9,6 +9,7 @@ import (
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/exitcodes"
+	"github.com/karan-banwasi/patchwork/internal/history"
 	"github.com/karan-banwasi/patchwork/internal/pm"
 	"github.com/karan-banwasi/patchwork/internal/upgrade"
 	semver "github.com/karan-banwasi/patchwork/internal/version"
@@ -472,6 +473,9 @@ func newUpgradeCmd() *cobra.Command {
 			executor.Stdin = cmd.InOrStdin()
 			executor.Concurrency = opts.concurrency
 			summary := executor.Execute(cmd.Context(), plan)
+			if err := recordUpgradeHistory(summary, opts.manager); err != nil {
+				fmt.Fprintf(errOut, "Warning: failed to record upgrade history: %v\n", err)
+			}
 			if opts.json {
 				jsonErr := summary.RenderJSON(out, false)
 				if summary.HasFailures() {
@@ -537,4 +541,33 @@ func orderSelectedPackagesWithRegistry(reg *pm.Registry, pkgs []pm.PackageUpdate
 // or terminal is closed by its installer.
 func orderSelectedPackages(pkgs []pm.PackageUpdate) []pm.PackageUpdate {
 	return orderSelectedPackagesWithRegistry(getDefaultRegistry(), pkgs)
+}
+
+func recordUpgradeHistory(summary upgrade.Summary, managerFilter string) error {
+	items := make([]history.Item, 0, len(summary.Results))
+	for _, r := range summary.Results {
+		item := history.Item{
+			Name:        r.Package.Name,
+			ID:          r.Package.Id,
+			Manager:     r.Package.ManagerName,
+			FromVersion: r.Package.Version,
+			ToVersion:   r.Package.AvailableVersion,
+			Status:      string(r.Status),
+			DurationMs:  r.Duration.Milliseconds(),
+		}
+		if r.Error != nil {
+			item.Error = r.Error.Error()
+		}
+		items = append(items, item)
+	}
+	return history.Append(history.Entry{
+		SchemaVersion: history.SchemaVersion,
+		RunID:         history.NewRunID(),
+		Timestamp:     time.Now().UTC(),
+		ManagerFilter: managerFilter,
+		Items:         items,
+		Succeeded:     summary.Succeeded,
+		Failed:        summary.Failed,
+		Skipped:       summary.Skipped,
+	})
 }
