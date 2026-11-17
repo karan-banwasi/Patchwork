@@ -68,6 +68,8 @@ func NewRootCmd() *cobra.Command {
 		newPinnedCmd(),
 		newHistoryCmd(),
 		newRollbackCmd(),
+		newExportCmd(),
+		newImportCmd(),
 		newCompletionCmd(),
 		newVersionCmd(),
 		newSelfUpdateCmd(),

@@ -192,6 +192,15 @@ func ValidateVersion(v string) error {
 	return nil
 }
 
+// ValidateOptionalVersion validates an optional package version string.
+// An empty string is allowed and indicates no specific version constraint.
+func ValidateOptionalVersion(v string) error {
+	if v == "" {
+		return nil
+	}
+	return ValidateVersion(v)
+}
+
 // EscapeWindowsArg escapes a command-line argument using Windows CommandLineToArgvW rules
 // (identical to golang.org/x/sys/windows.EscapeArg, portable across all build platforms).
 func EscapeWindowsArg(s string) string {

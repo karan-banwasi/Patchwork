@@ -7,6 +7,24 @@ import (
 	"time"
 )
 
+// InstalledPackage represents an installed package reported by a package manager.
+type InstalledPackage struct {
+	Name        string `json:"name"`
+	ID          string `json:"id"`
+	Version     string `json:"version"`
+	ManagerName string `json:"manager"`
+}
+
+// Lister is an optional interface implemented by managers that can list installed packages.
+type Lister interface {
+	ListInstalled(ctx context.Context) ([]InstalledPackage, error)
+}
+
+// Installer is an optional interface implemented by managers that can install a package by ID and optional version.
+type Installer interface {
+	InstallPackage(ctx context.Context, id, version string) error
+}
+
 // PackageUpdate represents an available update for a package managed by a package manager.
 type PackageUpdate struct {
 	Name             string `json:"name"`
