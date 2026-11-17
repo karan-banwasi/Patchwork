@@ -36,42 +36,38 @@ If signing occurs after `SHA256SUMS` is computed, checksum verification in `inst
 
 ---
 
-## Option 1: Azure Trusted Signing (Microsoft ACS)
+## Option 1: Azure Trusted Signing (Artifact Signing)
 
-Microsoft Azure Trusted Signing is a first-party cloud code-signing service that establishes immediate SmartScreen reputation without hardware USB tokens.
+Microsoft Azure Trusted Signing (now called **Azure Artifact Signing**) is a first-party cloud code-signing service that provides publicly trusted Microsoft certificates and immediate SmartScreen reputation without hardware USB tokens.
 
-### Prerequisites:
-1. Azure Subscription with Microsoft.CodeSigning resource provider registered.
-2. Trusted Signing Account with Identity Validation completed.
-3. Certificate Profile configured for Public Trust.
-4. Azure Service Principal configured with `Trusted Signing Certificate Profile Signer` role.
+Patchwork implements Azure Trusted Signing via [scripts/sign-windows.sh](../scripts/sign-windows.sh) using [Jsign](https://github.com/ebourg/jsign) (`--storetype TRUSTEDSIGNING`), allowing `pw.exe` and `pw-arm64.exe` to be signed and RFC 3161 timestamped directly on Linux CI runners (`ubuntu-latest`) in both `.github/workflows/release.yml` and `.goreleaser.yaml` **before** `SHA256SUMS` and Winget manifests are computed.
 
-### GitHub Secret Configuration:
-- `AZURE_CLIENT_ID`: Service principal app ID
-- `AZURE_TENANT_ID`: Azure directory tenant ID
-- `AZURE_CLIENT_SECRET`: Service principal secret (or federated OIDC credential)
-- `AZURE_TRUSTED_SIGNING_ACCOUNT`: Account name
-- `AZURE_TRUSTED_SIGNING_PROFILE`: Certificate profile name
+### Prerequisites (Azure Portal)
+1. An Azure Subscription with the `Microsoft.CodeSigning` resource provider registered.
+2. An **Artifact Signing (Trusted Signing) Account** with Identity Validation completed and a **Certificate Profile** (Public Trust).
+3. An Entra ID App Registration (Service Principal) assigned the **Trusted Signing Certificate Profile Signer** RBAC role on the Certificate Profile / Signing Account.
 
-### Workflow Integration (`release.yml`):
-```yaml
-      - name: Sign Windows Binaries (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
-        uses: azure/trusted-signing-action@v0.4.0
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: https://eus.codesigning.azure.net/
-          trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-          files: |
-            pw.exe
-            pw-arm64.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+### Authentication Options
+`scripts/sign-windows.sh` automatically selects between:
+1. **GitHub Actions OIDC (Recommended, passwordless)**: Add a Federated Credential on the Entra ID App Registration (`Issuer: https://token.actions.githubusercontent.com`, `Subject: repo:karan-banwasi/Patchwork:ref:refs/heads/main` — and/or tag filter — `Audience: api://AzureADTokenExchange`). The `release` job in `.github/workflows/release.yml` already grants `id-token: write`.
+2. **Service Principal Client Secret**: Set the `AZURE_CLIENT_SECRET` repository secret if not using OIDC.
+
+### GitHub Secrets & Variables Configuration
+Set these in **GitHub Repository Settings -> Secrets and variables -> Actions**:
+- `AZURE_TENANT_ID` (Secret or Variable): Entra ID directory tenant ID
+- `AZURE_CLIENT_ID` (Secret or Variable): App Registration client ID
+- `AZURE_CLIENT_SECRET` (Secret, optional when using OIDC): Client secret value
+- `AZURE_TRUSTED_SIGNING_ACCOUNT` (Secret or Variable): Artifact/Trusted Signing account name
+- `AZURE_TRUSTED_SIGNING_PROFILE` (Secret or Variable): Certificate profile name
+- `AZURE_TRUSTED_SIGNING_ENDPOINT` (Variable, optional): Regional endpoint URL or host (default: `https://eus.codesigning.azure.net/`)
+- `REQUIRE_WINDOWS_SIGNING` (Variable, optional): Set to `true` to fail the release build instead of skipping if `AZURE_CLIENT_ID` is unset
+
+### Workflow Integration (`release.yml`)
+`.github/workflows/release.yml` passes the `AZURE_*` environment variables into `Build and Create Release` and invokes:
+```bash
+bash ./scripts/sign-windows.sh pw.exe pw-arm64.exe
 ```
+between building `pw.exe`/`pw-arm64.exe` and generating `SHA256SUMS`.
 
 ---
 

@@ -115,6 +115,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT || vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT || vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE || vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          REQUIRE_WINDOWS_SIGNING: ${{ vars.REQUIRE_WINDOWS_SIGNING }}
         run: |
           # Ensure all remote tags are fetched
           git fetch --tags --force
@@ -173,26 +180,11 @@ jobs:
           GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X github.com/karan-banwasi/patchwork/cmd.version=$NEW_TAG" -o pw-linux-arm64 .
           
           # ---------------------------------------------------------------------------------
-          # Authenticode Code Signing Step (Azure Trusted Signing or SignPath OSS)
+          # Authenticode Code Signing Step (Azure Trusted Signing via Jsign)
           # Invariant: Signing MUST occur BEFORE computing SHA256SUMS and Winget manifests!
           # See docs/code-signing.md for setup and configuration details.
           # ---------------------------------------------------------------------------------
-          # - name: Authenticode Sign Windows Binaries
-          #   if: env.AZURE_CLIENT_ID != ''
-          #   uses: azure/trusted-signing-action@v0.4.0
-          #   with:
-          #     azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          #     azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          #     azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          #     endpoint: https://eus.codesigning.azure.net/
-          #     trusted-signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          #     certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-          #     files: |
-          #       pw.exe
-          #       pw-arm64.exe
-          #     file-digest: SHA256
-          #     timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          #     timestamp-digest: SHA256
+          bash ./scripts/sign-windows.sh pw.exe pw-arm64.exe
 
           # Generate universal SHA256SUMS manifest covering all 6 platform binaries
           sha256sum \

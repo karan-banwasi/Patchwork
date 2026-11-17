@@ -24,6 +24,9 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/karan-banwasi/patchwork/cmd.version={{ .Tag }}
+    hooks:
+      post:
+        - sh -c 'if [ "{{ .Os }}" = "windows" ]; then bash ./scripts/sign-windows.sh "{{ .Path }}"; fi'
 
 archives:
   # 1. Standard compressed archives for package managers (Homebrew, Scoop, tarball users)
