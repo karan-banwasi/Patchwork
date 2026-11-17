@@ -521,14 +521,14 @@ func TestUpgradeCmd_PoliciesChangelogAndConcurrency(t *testing.T) {
 	npmMgr := &mockUpgradeManager{
 		name: "npm",
 		updates: []pm.PackageUpdate{
-			{Id: "eslint", Name: "eslint", Version: "8.0.0", AvailableVersion: "9.0.0", ManagerName: "npm"},    // major -> skipped
+			{Id: "eslint", Name: "eslint", Version: "8.0.0", AvailableVersion: "9.0.0", ManagerName: "npm"},     // major -> skipped
 			{Id: "prettier", Name: "prettier", Version: "3.0.0", AvailableVersion: "3.1.0", ManagerName: "npm"}, // minor -> allowed
 		},
 	}
 	cargoMgr := &mockUpgradeManager{
 		name: "cargo",
 		updates: []pm.PackageUpdate{
-			{Id: "skip-me", Name: "skip-me", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "cargo"}, // excluded -> skipped
+			{Id: "skip-me", Name: "skip-me", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "cargo"},   // excluded -> skipped
 			{Id: "ripgrep", Name: "ripgrep", Version: "14.0.0", AvailableVersion: "14.0.1", ManagerName: "cargo"}, // patch -> allowed
 		},
 	}

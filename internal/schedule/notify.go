@@ -32,7 +32,7 @@ func sanitizeNotificationText(s string) string {
 }
 
 // escapePowerShellSingleQuoted escapes a string for safe embedding inside a PowerShell
-// single-quoted literal ('...'), where the only special syntax is a single quote doubled to ''.
+// single-quoted literal ('...'), where the only special syntax is a doubled single quote.
 func escapePowerShellSingleQuoted(s string) string {
 	clean := sanitizeNotificationText(s)
 	return strings.ReplaceAll(clean, "'", "''")
