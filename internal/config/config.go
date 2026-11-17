@@ -22,6 +22,7 @@ type DefaultsConfig struct {
 	NoRefresh        *bool    `json:"no_refresh,omitempty"`
 	Level            string   `json:"level,omitempty"`
 	Exclude          []string `json:"exclude,omitempty"`
+	Channel          string   `json:"channel,omitempty"`
 }
 
 // PinEntry represents a pinned package with optional version constraints, reason, and expiry.
@@ -376,7 +377,7 @@ func (c *Config) SaveTo(path string) error {
 		DisabledManagers: c.DisabledManagers,
 		AcceptAgreements: c.AcceptAgreements,
 	}
-	if c.Defaults.Timeout != "" || c.Defaults.AcceptAgreements != nil || c.Defaults.TrustRepository != nil || c.Defaults.NoRefresh != nil || c.Defaults.Level != "" || len(c.Defaults.Exclude) > 0 {
+	if c.Defaults.Timeout != "" || c.Defaults.AcceptAgreements != nil || c.Defaults.TrustRepository != nil || c.Defaults.NoRefresh != nil || c.Defaults.Level != "" || len(c.Defaults.Exclude) > 0 || c.Defaults.Channel != "" {
 		out.Defaults = &c.Defaults
 	}
 	if c.hasRichPins() {
@@ -590,6 +591,7 @@ var SupportedKeys = []string{
 	"defaults.no_refresh",
 	"defaults.level",
 	"defaults.exclude",
+	"defaults.channel",
 	"disabled_managers",
 	"accept_agreements",
 	"pins",
@@ -630,6 +632,8 @@ func (c *Config) Get(key string) (any, error) {
 		return c.Defaults.Level, nil
 	case "defaults.exclude":
 		return c.Defaults.Exclude, nil
+	case "defaults.channel":
+		return c.Defaults.Channel, nil
 	case "defaults":
 		return c.Defaults, nil
 	case "disabled_managers":
@@ -753,6 +757,14 @@ func (c *Config) Set(key string, val any) error {
 			return fmt.Errorf("invalid defaults.exclude value: expected string or list of strings, got %T", val)
 		}
 		c.Defaults.Exclude = list
+		return nil
+
+	case "defaults.channel":
+		str := strings.ToLower(strings.TrimSpace(fmt.Sprint(val)))
+		if str != "" && str != "stable" && str != "prerelease" {
+			return fmt.Errorf("invalid channel %q for defaults.channel (must be \"stable\" or \"prerelease\")", str)
+		}
+		c.Defaults.Channel = str
 		return nil
 
 	case "accept_agreements":

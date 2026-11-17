@@ -39,12 +39,20 @@ func configureRegistryIO(reg *pm.Registry, stdin io.Reader, stdout, stderr io.Wr
 
 // NewRootCmd returns a newly instantiated root command tree with all subcommands registered.
 func NewRootCmd() *cobra.Command {
+	var noticeHandle *selfUpdateNoticeHandle
+
 	cmd := &cobra.Command{
 		Use:          "pw",
 		Version:      version,
 		Short:        "Patchwork is a CLI tool to manage package updates",
 		Long:         `Patchwork iterates through packages that have available updates and helps manage them across 24 supported package managers: Homebrew, Mac App Store (mas), Winget, Scoop, Chocolatey, PowerShell PSResource, APT, DNF, Pacman, Zypper, Flatpak, Snap, npm Global, pnpm Global, Bun Global, .NET Global Tools, uv Python Tools, pipx Python Apps, Rust Cargo Crates, Rustup Toolchains, RubyGems, mise, asdf, and VS Code Extensions. Automatically detects host platform and queries only relevant managers.`,
 		SilenceUsage: true,
+		PersistentPreRun: func(c *cobra.Command, args []string) {
+			noticeHandle = startPassiveSelfUpdateCheck(c)
+		},
+		PersistentPostRun: func(c *cobra.Command, args []string) {
+			finishPassiveSelfUpdateCheck(c, noticeHandle)
+		},
 	}
 
 	cmd.CompletionOptions.DisableDefaultCmd = true

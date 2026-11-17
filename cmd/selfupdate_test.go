@@ -16,12 +16,17 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/karan-banwasi/patchwork/internal/config"
+	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -842,4 +847,732 @@ func TestSelfUpdate_RequireAttestation_FailsWhenMissing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provenance attestation verification gate failed") {
 		t.Fatalf("expected requireAttestation failure on 404, got: %v", err)
 	}
+}
+
+func newTestGitHubClient(handler http.Handler) *http.Client {
+	return &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if err := req.Context().Err(); err != nil {
+				return nil, err
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if err := req.Context().Err(); err != nil {
+				return nil, err
+			}
+			return rec.Result(), nil
+		}),
+	}
+}
+
+func TestPerformSelfUpdate_CheckAndJSON(t *testing.T) {
+	const baseURL = "https://mock.github.test"
+
+	t.Run("check with update available does not download or touch disk", func(t *testing.T) {
+		var downloadHits atomic.Int32
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/repos/karan-banwasi/Patchwork/releases/latest" {
+				_ = json.NewEncoder(w).Encode(ghRelease{
+					TagName: "v2.1.0",
+					HTMLURL: "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.1.0",
+				})
+				return
+			}
+			downloadHits.Add(1)
+			http.NotFound(w, r)
+		}))
+
+		// Even a managed winget path should not block --check
+		wingetExe := `C:\Users\user\AppData\Local\Microsoft\WinGet\Packages\KaranBanwasi.Patchwork\pw.exe`
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), client, baseURL, "v1.0.0", "windows", "amd64", wingetExe, selfUpdateOptions{
+			check: true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("expected --check to succeed, got: %v", err)
+		}
+		if downloadHits.Load() != 0 {
+			t.Errorf("expected 0 download hits during --check, got %d", downloadHits.Load())
+		}
+		got := out.String()
+		if !strings.Contains(got, "v1.0.0 -> v2.1.0") {
+			t.Errorf("expected update available message, got: %q", got)
+		}
+	})
+
+	t.Run("check --json reports update_available without updated field", func(t *testing.T) {
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(ghRelease{
+				TagName: "v2.5.0",
+				HTMLURL: "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.5.0",
+			})
+		}))
+
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), client, baseURL, "v2.0.0", "linux", "amd64", "/tmp/pw", selfUpdateOptions{
+			check: true,
+			json:  true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("performSelfUpdate failed: %v", err)
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
+			t.Fatalf("invalid JSON output %q: %v", out.String(), err)
+		}
+		if raw["schema_version"] != "1.0.0" {
+			t.Errorf("expected schema_version 1.0.0, got %v", raw["schema_version"])
+		}
+		if raw["current_version"] != "v2.0.0" || raw["latest_version"] != "v2.5.0" {
+			t.Errorf("unexpected versions in JSON: %+v", raw)
+		}
+		if raw["update_available"] != true || raw["channel"] != "stable" {
+			t.Errorf("unexpected update_available/channel in JSON: %+v", raw)
+		}
+		if raw["release_url"] != "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.5.0" {
+			t.Errorf("unexpected release_url: %v", raw["release_url"])
+		}
+		if _, hasUpdated := raw["updated"]; hasUpdated {
+			t.Errorf("expected 'updated' field to be omitted in --check mode, got %v", raw["updated"])
+		}
+	})
+
+	t.Run("full update --json reports updated true and emits pure JSON", func(t *testing.T) {
+		payload := []byte("new-binary-json-test")
+		sum := sha256.Sum256(payload)
+		hashHex := hex.EncodeToString(sum[:])
+
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repos/karan-banwasi/Patchwork/releases/latest":
+				_ = json.NewEncoder(w).Encode(ghRelease{
+					TagName: "v3.0.0",
+					HTMLURL: "https://github.com/karan-banwasi/Patchwork/releases/tag/v3.0.0",
+					Assets: []ghAsset{
+						{Name: "pw-linux-amd64", BrowserDownloadURL: baseURL + "/dl/pw-linux-amd64"},
+						{Name: "SHA256SUMS", BrowserDownloadURL: baseURL + "/dl/SHA256SUMS"},
+					},
+				})
+			case "/dl/SHA256SUMS":
+				_, _ = fmt.Fprintf(w, "%s  pw-linux-amd64\n", hashHex)
+			case "/dl/pw-linux-amd64":
+				_, _ = w.Write(payload)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+
+		tmpDir := t.TempDir()
+		exePath := filepath.Join(tmpDir, "pw-linux-amd64")
+		_ = os.WriteFile(exePath, []byte("old"), 0755)
+
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), client, baseURL, "v2.0.0", "linux", "amd64", exePath, selfUpdateOptions{
+			skipAttestation: true,
+			json:            true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("performSelfUpdate --json failed: %v", err)
+		}
+
+		var parsed selfUpdateJSONOutput
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("expected valid pure JSON output, got %q: %v", out.String(), err)
+		}
+		if !parsed.UpdateAvailable || parsed.Updated == nil || !*parsed.Updated {
+			t.Errorf("expected update_available=true and updated=true, got %+v", parsed)
+		}
+		if parsed.LatestVersion != "v3.0.0" || parsed.Channel != "stable" {
+			t.Errorf("unexpected parsed JSON fields: %+v", parsed)
+		}
+	})
+
+	t.Run("full update --json when already up to date sets updated=false", func(t *testing.T) {
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(ghRelease{
+				TagName: "v2.0.0",
+				HTMLURL: "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.0.0",
+			})
+		}))
+
+		tmpDir := t.TempDir()
+		exePath := filepath.Join(tmpDir, "pw-linux-amd64")
+		_ = os.WriteFile(exePath, []byte("current"), 0755)
+
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), client, baseURL, "v2.0.0", "linux", "amd64", exePath, selfUpdateOptions{
+			skipAttestation: true,
+			json:            true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("performSelfUpdate failed: %v", err)
+		}
+
+		var parsed selfUpdateJSONOutput
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("expected valid JSON, got %q: %v", out.String(), err)
+		}
+		if parsed.UpdateAvailable || parsed.Updated == nil || *parsed.Updated {
+			t.Errorf("expected update_available=false and updated=false, got %+v", parsed)
+		}
+	})
+}
+
+func TestPerformSelfUpdate_ChannelAndPrerelease(t *testing.T) {
+	const baseURL = "https://mock.github.test"
+
+	t.Run("prerelease channel picks newest non-draft prerelease and updates binary", func(t *testing.T) {
+		payload := []byte("prerelease-binary-payload")
+		sum := sha256.Sum256(payload)
+		hashHex := hex.EncodeToString(sum[:])
+
+		var requestedPath string
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repos/karan-banwasi/Patchwork/releases":
+				requestedPath = r.URL.RequestURI()
+				releases := []ghRelease{
+					{
+						TagName:    "v3.0.0-alpha.1",
+						Draft:      true,
+						Prerelease: true,
+						HTMLURL:    "https://github.com/karan-banwasi/Patchwork/releases/tag/v3.0.0-alpha.1",
+					},
+					{
+						TagName:    "v2.1.0-beta.1",
+						Prerelease: true,
+						HTMLURL:    "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.1.0-beta.1",
+					},
+					{
+						TagName:    "v2.1.0-rc.2",
+						Prerelease: true,
+						HTMLURL:    "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.1.0-rc.2",
+						Assets: []ghAsset{
+							{Name: "pw-linux-amd64", BrowserDownloadURL: baseURL + "/dl/pw-linux-amd64"},
+							{Name: "SHA256SUMS", BrowserDownloadURL: baseURL + "/dl/SHA256SUMS"},
+						},
+					},
+					{
+						TagName:    "v2.0.0",
+						Prerelease: false,
+						HTMLURL:    "https://github.com/karan-banwasi/Patchwork/releases/tag/v2.0.0",
+					},
+				}
+				_ = json.NewEncoder(w).Encode(releases)
+			case "/dl/SHA256SUMS":
+				_, _ = fmt.Fprintf(w, "%s  pw-linux-amd64\n", hashHex)
+			case "/dl/pw-linux-amd64":
+				_, _ = w.Write(payload)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+
+		tmpDir := t.TempDir()
+		exePath := filepath.Join(tmpDir, "pw-linux-amd64")
+		_ = os.WriteFile(exePath, []byte("old"), 0755)
+
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), client, baseURL, "v2.0.0", "linux", "amd64", exePath, selfUpdateOptions{
+			prerelease:      true,
+			skipAttestation: true,
+			json:            true,
+		}, &out)
+		if err != nil {
+			t.Fatalf("expected prerelease update to succeed, got: %v", err)
+		}
+		if requestedPath != "/repos/karan-banwasi/Patchwork/releases?per_page=10" {
+			t.Errorf("expected releases?per_page=10 request, got %q", requestedPath)
+		}
+
+		var parsed selfUpdateJSONOutput
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("invalid JSON output: %v", err)
+		}
+		if parsed.LatestVersion != "v2.1.0-rc.2" || parsed.Channel != "prerelease" {
+			t.Errorf("expected v2.1.0-rc.2 on prerelease channel, got %+v", parsed)
+		}
+		if parsed.Updated == nil || !*parsed.Updated {
+			t.Errorf("expected updated=true, got %+v", parsed)
+		}
+		gotBytes, _ := os.ReadFile(exePath)
+		if !bytes.Equal(gotBytes, payload) {
+			t.Errorf("expected binary replaced with prerelease payload")
+		}
+	})
+
+	t.Run("invalid channel returns error", func(t *testing.T) {
+		var out bytes.Buffer
+		err := performSelfUpdate(context.Background(), http.DefaultClient, "https://api.github.test", "v1.0.0", "linux", "amd64", "/tmp/pw", selfUpdateOptions{
+			check:   true,
+			channel: "nightly",
+		}, &out)
+		if err == nil || !strings.Contains(err.Error(), "invalid channel") {
+			t.Fatalf("expected invalid channel error, got: %v", err)
+		}
+	})
+
+	t.Run("CLI command honors defaults.channel from config and allows flag overrides", func(t *testing.T) {
+		cfgPath := filepath.Join(t.TempDir(), "config.json")
+		t.Setenv("PATCHWORK_CONFIG", cfgPath)
+		cfg := &config.Config{}
+		if err := cfg.Set("defaults.channel", "prerelease"); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.SaveTo(cfgPath); err != nil {
+			t.Fatal(err)
+		}
+
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repos/karan-banwasi/Patchwork/releases":
+				_ = json.NewEncoder(w).Encode([]ghRelease{
+					{TagName: "v2.2.0-rc.1", Prerelease: true, HTMLURL: "https://example.test/rc1"},
+				})
+			case "/repos/karan-banwasi/Patchwork/releases/latest":
+				_ = json.NewEncoder(w).Encode(ghRelease{
+					TagName: "v2.1.0", HTMLURL: "https://example.test/v2.1.0",
+				})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+
+		origBase := selfUpdateAPIBaseURL
+		origClient := selfUpdateHTTPClient
+		origVer := version
+		selfUpdateAPIBaseURL = baseURL
+		selfUpdateHTTPClient = client
+		version = "v2.0.0"
+		t.Cleanup(func() {
+			selfUpdateAPIBaseURL = origBase
+			selfUpdateHTTPClient = origClient
+			version = origVer
+		})
+
+		// 1. Default from config -> prerelease
+		var out1 bytes.Buffer
+		root1 := NewRootCmd()
+		root1.SetOut(&out1)
+		root1.SetArgs([]string{"self-update", "--check", "--json"})
+		if err := root1.Execute(); err != nil {
+			t.Fatalf("self-update --check --json failed: %v", err)
+		}
+		var res1 selfUpdateJSONOutput
+		if err := json.Unmarshal(out1.Bytes(), &res1); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if res1.Channel != "prerelease" || res1.LatestVersion != "v2.2.0-rc.1" {
+			t.Errorf("expected prerelease from config, got %+v", res1)
+		}
+
+		// 2. Explicit --channel stable overrides config
+		var out2 bytes.Buffer
+		root2 := NewRootCmd()
+		root2.SetOut(&out2)
+		root2.SetArgs([]string{"self-update", "--check", "--json", "--channel", "stable"})
+		if err := root2.Execute(); err != nil {
+			t.Fatalf("self-update --channel stable failed: %v", err)
+		}
+		var res2 selfUpdateJSONOutput
+		if err := json.Unmarshal(out2.Bytes(), &res2); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if res2.Channel != "stable" || res2.LatestVersion != "v2.1.0" {
+			t.Errorf("expected stable override, got %+v", res2)
+		}
+
+		// 3. --prerelease overrides --channel stable
+		var out3 bytes.Buffer
+		root3 := NewRootCmd()
+		root3.SetOut(&out3)
+		root3.SetArgs([]string{"self-update", "--check", "--json", "--channel", "stable", "--prerelease"})
+		if err := root3.Execute(); err != nil {
+			t.Fatalf("self-update --prerelease failed: %v", err)
+		}
+		var res3 selfUpdateJSONOutput
+		if err := json.Unmarshal(out3.Bytes(), &res3); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if res3.Channel != "prerelease" || res3.LatestVersion != "v2.2.0-rc.1" {
+			t.Errorf("expected --prerelease to force prerelease channel, got %+v", res3)
+		}
+	})
+}
+
+func TestSelfUpdateCachePath(t *testing.T) {
+	customCache := filepath.Join(t.TempDir(), "custom-selfupdate.json")
+	t.Setenv("PATCHWORK_SELFUPDATE_CACHE", customCache)
+	if got := SelfUpdateCachePath(); got != customCache {
+		t.Errorf("SelfUpdateCachePath() = %q, want %q", got, customCache)
+	}
+
+	t.Setenv("PATCHWORK_SELFUPDATE_CACHE", "")
+	updatesCache := filepath.Join(t.TempDir(), "pw-cache", "updates-cache.json")
+	t.Setenv("PATCHWORK_CACHE", updatesCache)
+	wantDefault := filepath.Join(filepath.Dir(updatesCache), "selfupdate-cache.json")
+	if got := SelfUpdateCachePath(); got != wantDefault {
+		t.Errorf("SelfUpdateCachePath() default = %q, want %q", got, wantDefault)
+	}
+}
+
+func TestPassiveSelfUpdateNotice(t *testing.T) {
+	const baseURL = "https://mock.github.test"
+
+	setupMockCheckRegistry := func(t *testing.T) {
+		t.Helper()
+		reg := pm.NewRegistry(&mockCheckManager{name: "mockpm"})
+		registryOverride = reg
+		t.Cleanup(func() { registryOverride = nil })
+	}
+
+	t.Run("fetches release, caches for 24h, and prints notice to stderr", func(t *testing.T) {
+		setupMockCheckRegistry(t)
+		cacheFile := filepath.Join(t.TempDir(), "selfupdate-cache.json")
+		cfgFile := filepath.Join(t.TempDir(), "config.json")
+		t.Setenv("PATCHWORK_SELFUPDATE_CACHE", cacheFile)
+		t.Setenv("PATCHWORK_CONFIG", cfgFile)
+		t.Setenv("PATCHWORK_OFFLINE", "")
+		t.Setenv("PATCHWORK_NO_UPDATE_CHECK", "")
+
+		var hits atomic.Int32
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			_ = json.NewEncoder(w).Encode(ghRelease{
+				TagName: "v1.9.0",
+				HTMLURL: "https://github.com/karan-banwasi/Patchwork/releases/tag/v1.9.0",
+			})
+		}))
+
+		origBase := selfUpdateAPIBaseURL
+		origNoticeClient := selfUpdateNoticeClient
+		origVer := version
+		selfUpdateAPIBaseURL = baseURL
+		selfUpdateNoticeClient = client
+		version = "v1.0.0"
+		t.Cleanup(func() {
+			selfUpdateAPIBaseURL = origBase
+			selfUpdateNoticeClient = origNoticeClient
+			version = origVer
+		})
+
+		// First run: hits server, writes cache, prints notice to stderr
+		var out1, err1 bytes.Buffer
+		cmd1 := NewRootCmd()
+		cmd1.SetOut(&out1)
+		cmd1.SetErr(&err1)
+		cmd1.SetArgs([]string{"check"})
+		if err := cmd1.Execute(); err != nil {
+			t.Fatalf("check failed: %v", err)
+		}
+		if hits.Load() != 1 {
+			t.Errorf("expected 1 HTTP request on cold cache, got %d", hits.Load())
+		}
+		if !strings.Contains(err1.String(), "v1.0.0 -> v1.9.0") {
+			t.Errorf("expected stderr notice on first run, got: %q", err1.String())
+		}
+
+		// Verify cache file written
+		cached, ok := loadSelfUpdateCache(channelStable)
+		if !ok || cached.LatestVersion != "v1.9.0" {
+			t.Fatalf("expected valid cached entry v1.9.0, got ok=%v, cached=%+v", ok, cached)
+		}
+
+		// Second run within 24h: uses cache, 0 HTTP requests, still prints notice
+		var out2, err2 bytes.Buffer
+		cmd2 := NewRootCmd()
+		cmd2.SetOut(&out2)
+		cmd2.SetErr(&err2)
+		cmd2.SetArgs([]string{"check"})
+		if err := cmd2.Execute(); err != nil {
+			t.Fatalf("second check failed: %v", err)
+		}
+		if hits.Load() != 1 {
+			t.Errorf("expected 0 additional HTTP requests within 24h, got total %d", hits.Load())
+		}
+		if !strings.Contains(err2.String(), "v1.0.0 -> v1.9.0") {
+			t.Errorf("expected stderr notice from cache, got: %q", err2.String())
+		}
+
+		// Expired cache (>24h): refreshes via HTTP
+		expired := SelfUpdateCache{
+			CheckedAt:     time.Now().UTC().Add(-25 * time.Hour),
+			LatestVersion: "v1.5.0",
+			Channel:       channelStable,
+		}
+		if err := saveSelfUpdateCache(&expired); err != nil {
+			t.Fatal(err)
+		}
+		var out3, err3 bytes.Buffer
+		cmd3 := NewRootCmd()
+		cmd3.SetOut(&out3)
+		cmd3.SetErr(&err3)
+		cmd3.SetArgs([]string{"check"})
+		if err := cmd3.Execute(); err != nil {
+			t.Fatalf("third check failed: %v", err)
+		}
+		if hits.Load() != 2 {
+			t.Errorf("expected HTTP refresh after 24h expiry, got total %d", hits.Load())
+		}
+		if !strings.Contains(err3.String(), "v1.0.0 -> v1.9.0") {
+			t.Errorf("expected refreshed notice, got: %q", err3.String())
+		}
+	})
+
+	t.Run("does not print notice when already on latest version", func(t *testing.T) {
+		setupMockCheckRegistry(t)
+		cacheFile := filepath.Join(t.TempDir(), "selfupdate-cache.json")
+		t.Setenv("PATCHWORK_SELFUPDATE_CACHE", cacheFile)
+		t.Setenv("PATCHWORK_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+		t.Setenv("PATCHWORK_OFFLINE", "")
+		t.Setenv("PATCHWORK_NO_UPDATE_CHECK", "")
+
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(ghRelease{TagName: "v1.9.0"})
+		}))
+
+		origBase := selfUpdateAPIBaseURL
+		origNoticeClient := selfUpdateNoticeClient
+		origVer := version
+		selfUpdateAPIBaseURL = baseURL
+		selfUpdateNoticeClient = client
+		version = "v1.9.0"
+		t.Cleanup(func() {
+			selfUpdateAPIBaseURL = origBase
+			selfUpdateNoticeClient = origNoticeClient
+			version = origVer
+		})
+
+		var out, errBuf bytes.Buffer
+		cmd := NewRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errBuf)
+		cmd.SetArgs([]string{"check"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("check failed: %v", err)
+		}
+		if errBuf.Len() != 0 {
+			t.Errorf("expected empty stderr when up to date, got: %q", errBuf.String())
+		}
+	})
+
+	t.Run("slow server does not stall CLI beyond grace wait", func(t *testing.T) {
+		setupMockCheckRegistry(t)
+		cacheFile := filepath.Join(t.TempDir(), "selfupdate-cache.json")
+		t.Setenv("PATCHWORK_SELFUPDATE_CACHE", cacheFile)
+		t.Setenv("PATCHWORK_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+		t.Setenv("PATCHWORK_OFFLINE", "")
+		t.Setenv("PATCHWORK_NO_UPDATE_CHECK", "")
+
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		}))
+
+		origBase := selfUpdateAPIBaseURL
+		origNoticeClient := selfUpdateNoticeClient
+		origVer := version
+		selfUpdateAPIBaseURL = baseURL
+		selfUpdateNoticeClient = client
+		version = "v1.0.0"
+		t.Cleanup(func() {
+			selfUpdateAPIBaseURL = origBase
+			selfUpdateNoticeClient = origNoticeClient
+			version = origVer
+		})
+
+		start := time.Now()
+		var out, errBuf bytes.Buffer
+		cmd := NewRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errBuf)
+		cmd.SetArgs([]string{"check"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("check failed on slow update server: %v", err)
+		}
+		elapsed := time.Since(start)
+		if elapsed > 3*time.Second {
+			t.Errorf("expected passive check not to stall CLI, took %s", elapsed)
+		}
+		if errBuf.Len() != 0 {
+			t.Errorf("expected no notice on timeout, got %q", errBuf.String())
+		}
+	})
+
+	t.Run("suppression conditions prevent network check and stderr notice", func(t *testing.T) {
+		setupMockCheckRegistry(t)
+		cacheFile := filepath.Join(t.TempDir(), "selfupdate-cache.json")
+		t.Setenv("PATCHWORK_SELFUPDATE_CACHE", cacheFile)
+		t.Setenv("PATCHWORK_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+
+		// Pre-populate cache with newer version so even cached notice MUST be suppressed
+		if err := saveSelfUpdateCache(&SelfUpdateCache{
+			CheckedAt:     time.Now().UTC(),
+			LatestVersion: "v9.9.9",
+			Channel:       channelStable,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		var hits atomic.Int32
+		client := newTestGitHubClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			_ = json.NewEncoder(w).Encode(ghRelease{TagName: "v9.9.9"})
+		}))
+
+		origBase := selfUpdateAPIBaseURL
+		origClient := selfUpdateHTTPClient
+		origNoticeClient := selfUpdateNoticeClient
+		origVer := version
+		selfUpdateAPIBaseURL = baseURL
+		selfUpdateHTTPClient = client
+		selfUpdateNoticeClient = client
+		t.Cleanup(func() {
+			selfUpdateAPIBaseURL = origBase
+			selfUpdateHTTPClient = origClient
+			selfUpdateNoticeClient = origNoticeClient
+			version = origVer
+		})
+
+		cases := []struct {
+			name string
+			ver  string
+			env  map[string]string
+			args []string
+		}{
+			{
+				name: "version is dev",
+				ver:  "dev",
+				args: []string{"check"},
+			},
+			{
+				name: "--json flag",
+				ver:  "v1.0.0",
+				args: []string{"check", "--json"},
+			},
+			{
+				name: "--quiet flag",
+				ver:  "v1.0.0",
+				args: []string{"check", "-q"},
+			},
+			{
+				name: "--offline flag",
+				ver:  "v1.0.0",
+				args: []string{"check", "--offline"},
+			},
+			{
+				name: "PATCHWORK_OFFLINE=1",
+				ver:  "v1.0.0",
+				env:  map[string]string{"PATCHWORK_OFFLINE": "1"},
+				args: []string{"check"},
+			},
+			{
+				name: "PATCHWORK_OFFLINE=true",
+				ver:  "v1.0.0",
+				env:  map[string]string{"PATCHWORK_OFFLINE": "true"},
+				args: []string{"check"},
+			},
+			{
+				name: "PATCHWORK_NO_UPDATE_CHECK=1",
+				ver:  "v1.0.0",
+				env:  map[string]string{"PATCHWORK_NO_UPDATE_CHECK": "1"},
+				args: []string{"check"},
+			},
+			{
+				name: "PATCHWORK_NO_UPDATE_CHECK=true",
+				ver:  "v1.0.0",
+				env:  map[string]string{"PATCHWORK_NO_UPDATE_CHECK": "true"},
+				args: []string{"check"},
+			},
+			{
+				name: "self-update subcommand",
+				ver:  "v1.0.0",
+				args: []string{"self-update", "--check"},
+			},
+			{
+				name: "update alias subcommand",
+				ver:  "v1.0.0",
+				args: []string{"update", "--check"},
+			},
+			{
+				name: "completion subcommand",
+				ver:  "v1.0.0",
+				args: []string{"completion", "powershell"},
+			},
+			{
+				name: "version subcommand",
+				ver:  "v1.0.0",
+				args: []string{"version"},
+			},
+			{
+				name: "help subcommand",
+				ver:  "v1.0.0",
+				args: []string{"help"},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Setenv("PATCHWORK_OFFLINE", "")
+				t.Setenv("PATCHWORK_NO_UPDATE_CHECK", "")
+				for k, v := range tc.env {
+					t.Setenv(k, v)
+				}
+				version = tc.ver
+				beforeHits := hits.Load()
+
+				var out, errBuf bytes.Buffer
+				cmd := NewRootCmd()
+				cmd.SetOut(&out)
+				cmd.SetErr(&errBuf)
+				cmd.SetArgs(tc.args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("command %v failed: %v", tc.args, err)
+				}
+
+				if strings.Contains(errBuf.String(), "new version of Patchwork") {
+					t.Errorf("expected passive notice to be suppressed for %s, got stderr: %q", tc.name, errBuf.String())
+				}
+				// Note: self-update / update subcommands intentionally hit the server for their own --check action,
+				// while all other suppressed commands must make 0 passive check hits.
+				if tc.args[0] != "self-update" && tc.args[0] != "update" {
+					if hits.Load() != beforeHits {
+						t.Errorf("expected 0 HTTP requests for %s, got %d", tc.name, hits.Load()-beforeHits)
+					}
+				}
+			})
+		}
+
+		// Also verify cold cache makes 0 HTTP requests when suppressed
+		_ = os.Remove(cacheFile)
+		for _, tc := range cases {
+			if tc.args[0] == "self-update" || tc.args[0] == "update" {
+				continue
+			}
+			t.Run("cold_cache_"+tc.name, func(t *testing.T) {
+				t.Setenv("PATCHWORK_OFFLINE", "")
+				t.Setenv("PATCHWORK_NO_UPDATE_CHECK", "")
+				for k, v := range tc.env {
+					t.Setenv(k, v)
+				}
+				version = tc.ver
+				beforeHits := hits.Load()
+
+				var out, errBuf bytes.Buffer
+				cmd := NewRootCmd()
+				cmd.SetOut(&out)
+				cmd.SetErr(&errBuf)
+				cmd.SetArgs(tc.args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("command %v failed: %v", tc.args, err)
+				}
+				if hits.Load() != beforeHits {
+					t.Errorf("expected 0 HTTP requests on cold cache for %s, got %d", tc.name, hits.Load()-beforeHits)
+				}
+			})
+		}
+	})
 }

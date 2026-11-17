@@ -414,6 +414,32 @@ func TestConfig_GetSetValidation(t *testing.T) {
 		t.Errorf("expected error setting unknown manager name")
 	}
 
+	// Test defaults.channel
+	if err := cfg.Set("defaults.channel", "prerelease"); err != nil {
+		t.Fatalf("unexpected error setting defaults.channel: %v", err)
+	}
+	val, err = cfg.Get("defaults.channel")
+	if err != nil || val != "prerelease" {
+		t.Errorf("expected defaults.channel=prerelease, got val=%v, err=%v", val, err)
+	}
+	if err := cfg.Set("defaults.channel", "STABLE"); err != nil {
+		t.Fatalf("unexpected error setting defaults.channel=STABLE: %v", err)
+	}
+	val, _ = cfg.Get("defaults.channel")
+	if val != "stable" {
+		t.Errorf("expected normalized defaults.channel=stable, got %v", val)
+	}
+	if err := cfg.Set("defaults.channel", ""); err != nil {
+		t.Fatalf("unexpected error clearing defaults.channel: %v", err)
+	}
+	val, _ = cfg.Get("defaults.channel")
+	if val != "" {
+		t.Errorf("expected cleared defaults.channel=\"\", got %v", val)
+	}
+	if err := cfg.Set("defaults.channel", "nightly"); err == nil {
+		t.Errorf("expected error setting invalid defaults.channel")
+	}
+
 	// Test unknown key
 	if err := cfg.Set("invalid.key", "val"); err == nil {
 		t.Errorf("expected error setting unknown key")
@@ -490,5 +516,40 @@ func TestConfig_DefaultsLevelAndExclude(t *testing.T) {
 	}
 	if loaded.Defaults.Level != "" || len(loaded.Defaults.Exclude) != 0 {
 		t.Errorf("expected cleared level and exclude, got %+v", loaded.Defaults)
+	}
+}
+
+func TestConfig_DefaultsChannelSaveLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+
+	cfg := &Config{}
+	if err := cfg.Set("defaults.channel", "prerelease"); err != nil {
+		t.Fatalf("Set defaults.channel failed: %v", err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo failed: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom failed: %v", err)
+	}
+	if loaded.Defaults.Channel != "prerelease" {
+		t.Errorf("expected loaded Defaults.Channel=prerelease, got %q", loaded.Defaults.Channel)
+	}
+
+	// Clearing channel should omit empty defaults block when no other defaults are set
+	if err := loaded.Set("defaults.channel", ""); err != nil {
+		t.Fatalf("clearing channel failed: %v", err)
+	}
+	if err := loaded.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo after clearing failed: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if strings.Contains(string(raw), `"defaults"`) {
+		t.Errorf("expected empty defaults block to be omitted, got: %s", string(raw))
 	}
 }

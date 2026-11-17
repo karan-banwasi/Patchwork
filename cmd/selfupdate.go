@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/httputil"
 	ver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
@@ -34,6 +35,14 @@ const (
 	maxManifestSize    = 1 << 20 // 1 MiB
 	metadataTimeout    = 30 * time.Second
 	binaryDownloadTime = 10 * time.Minute
+
+	channelStable     = "stable"
+	channelPrerelease = "prerelease"
+)
+
+var (
+	selfUpdateAPIBaseURL = defaultGitHubAPI
+	selfUpdateHTTPClient *http.Client
 )
 
 type selfUpdateOptions struct {
@@ -41,10 +50,25 @@ type selfUpdateOptions struct {
 	skipAttestation    bool
 	requireAttestation bool
 	offline            bool
+	check              bool
+	prerelease         bool
+	channel            string
+	json               bool
+}
+
+type selfUpdateJSONOutput struct {
+	SchemaVersion   string `json:"schema_version"`
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Channel         string `json:"channel"`
+	ReleaseURL      string `json:"release_url"`
+	Updated         *bool  `json:"updated,omitempty"`
 }
 
 type ghRelease struct {
 	TagName    string    `json:"tag_name"`
+	HTMLURL    string    `json:"html_url"`
 	Draft      bool      `json:"draft"`
 	Prerelease bool      `json:"prerelease"`
 	Assets     []ghAsset `json:"assets"`
@@ -466,39 +490,63 @@ func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL,
 	return nil
 }
 
-func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
-	if opts.skipAttestation && opts.requireAttestation {
-		return fmt.Errorf("cannot specify both --skip-attestation and --require-attestation")
+func githubTokenFromEnv() string {
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		return token
 	}
+	return os.Getenv("GITHUB_TOKEN")
+}
 
-	if !opts.force {
-		if err := detectManagedInstall(exePath); err != nil {
-			return err
+func normalizeChannel(ch string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(ch))
+	if norm == "" {
+		return "", nil
+	}
+	if norm != channelStable && norm != channelPrerelease {
+		return "", fmt.Errorf("invalid channel %q: must be %q or %q", ch, channelStable, channelPrerelease)
+	}
+	return norm, nil
+}
+
+func resolveChannel(flagChannel string, prerelease bool, cfg *config.Config) (string, error) {
+	if flagChannel != "" {
+		if _, err := normalizeChannel(flagChannel); err != nil {
+			return "", err
 		}
 	}
-
-	exeDir := filepath.Dir(exePath)
-	cleanupStaleUpdateFiles(exeDir, exePath)
-
-	fmt.Fprintf(out, "Checking for Patchwork updates (current: %s)...\n", currentVersion)
-
-	assetName, err := resolveBinaryAsset(goos, goarch)
-	if err != nil {
-		return err
+	if prerelease {
+		return channelPrerelease, nil
 	}
-
-	token := os.Getenv("GH_TOKEN")
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+	if flagChannel != "" {
+		return normalizeChannel(flagChannel)
 	}
+	if cfg != nil && cfg.Defaults.Channel != "" {
+		ch, err := normalizeChannel(cfg.Defaults.Channel)
+		if err != nil {
+			return "", err
+		}
+		if ch != "" {
+			return ch, nil
+		}
+	}
+	return channelStable, nil
+}
 
+func fetchTargetRelease(ctx context.Context, client *http.Client, apiBaseURL, channel, token string) (*ghRelease, error) {
 	metaCtx, metaCancel := context.WithTimeout(ctx, metadataTimeout)
 	defer metaCancel()
 
-	apiURL := fmt.Sprintf("%s/repos/%s/releases/latest", strings.TrimRight(apiBaseURL, "/"), githubRepo)
+	base := strings.TrimRight(apiBaseURL, "/")
+	var apiURL string
+	if channel == channelPrerelease {
+		apiURL = fmt.Sprintf("%s/repos/%s/releases?per_page=10", base, githubRepo)
+	} else {
+		apiURL = fmt.Sprintf("%s/repos/%s/releases/latest", base, githubRepo)
+	}
+
 	req, err := http.NewRequestWithContext(metaCtx, http.MethodGet, apiURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Patchwork-CLI")
 	if token != "" {
@@ -507,27 +555,129 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to query GitHub releases: %w", err)
+		return nil, fmt.Errorf("failed to query GitHub releases: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	if channel == channelPrerelease {
+		var releases []ghRelease
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize)).Decode(&releases); err != nil {
+			return nil, fmt.Errorf("failed to decode release info: %w", err)
+		}
+		var best *ghRelease
+		for i := range releases {
+			r := &releases[i]
+			if r.Draft || r.TagName == "" {
+				continue
+			}
+			if best == nil || isNewerVersion(best.TagName, r.TagName) {
+				best = r
+			}
+		}
+		if best == nil {
+			return nil, fmt.Errorf("no eligible releases found")
+		}
+		return best, nil
 	}
 
 	var rel ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize)).Decode(&rel); err != nil {
-		return fmt.Errorf("failed to decode release info: %w", err)
+		return nil, fmt.Errorf("failed to decode release info: %w", err)
 	}
-
 	if rel.TagName == "" {
-		return fmt.Errorf("no release tag found")
+		return nil, fmt.Errorf("no release tag found")
 	}
 	if rel.Draft || rel.Prerelease {
-		return fmt.Errorf("release %s is a draft or prerelease; refusing to update", rel.TagName)
+		return nil, fmt.Errorf("release %s is a draft or prerelease; refusing to update", rel.TagName)
+	}
+	return &rel, nil
+}
+
+func writeSelfUpdateJSON(out io.Writer, payload selfUpdateJSONOutput) error {
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(payload)
+}
+
+func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
+	if opts.skipAttestation && opts.requireAttestation {
+		return fmt.Errorf("cannot specify both --skip-attestation and --require-attestation")
 	}
 
-	if !isNewerVersion(currentVersion, rel.TagName) {
+	channel, err := resolveChannel(opts.channel, opts.prerelease, nil)
+	if err != nil {
+		return err
+	}
+
+	var exeDir string
+	var assetName string
+	if !opts.check {
+		if !opts.force {
+			if err := detectManagedInstall(exePath); err != nil {
+				return err
+			}
+		}
+
+		exeDir = filepath.Dir(exePath)
+		cleanupStaleUpdateFiles(exeDir, exePath)
+
+		assetName, err = resolveBinaryAsset(goos, goarch)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !opts.json {
+		fmt.Fprintf(out, "Checking for Patchwork updates (current: %s)...\n", currentVersion)
+	}
+
+	token := githubTokenFromEnv()
+	rel, err := fetchTargetRelease(ctx, client, apiBaseURL, channel, token)
+	if err != nil {
+		return err
+	}
+
+	updateAvailable := isNewerVersion(currentVersion, rel.TagName)
+
+	if opts.check {
+		if opts.json {
+			return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   "1.0.0",
+				CurrentVersion:  currentVersion,
+				LatestVersion:   rel.TagName,
+				UpdateAvailable: updateAvailable,
+				Channel:         channel,
+				ReleaseURL:      rel.HTMLURL,
+			})
+		}
+		if updateAvailable {
+			fmt.Fprintf(out, "A new version of Patchwork is available: %s -> %s (channel: %s)\n", currentVersion, rel.TagName, channel)
+			if rel.HTMLURL != "" {
+				fmt.Fprintf(out, "Release URL: %s\n", rel.HTMLURL)
+			}
+		} else {
+			fmt.Fprintf(out, "Patchwork is already up to date (%s).\n", currentVersion)
+		}
+		return nil
+	}
+
+	if !updateAvailable {
+		if opts.json {
+			updated := false
+			return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   "1.0.0",
+				CurrentVersion:  currentVersion,
+				LatestVersion:   rel.TagName,
+				UpdateAvailable: false,
+				Channel:         channel,
+				ReleaseURL:      rel.HTMLURL,
+				Updated:         &updated,
+			})
+		}
 		fmt.Fprintf(out, "Patchwork is already up to date (%s).\n", currentVersion)
 		return nil
 	}
@@ -601,7 +751,9 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		return fmt.Errorf("release %s has no SHA256SUMS checksum manifest; refusing to update", rel.TagName)
 	}
 
-	fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
+	if !opts.json {
+		fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
+	}
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, binaryDownloadTime)
 	defer dlCancel()
@@ -655,7 +807,9 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("SHA256 checksum mismatch for %s: expected %s, got %s", assetName, expectedSHA, actualSHA)
 	}
-	fmt.Fprintf(out, "Verified SHA256 checksum (%s).\n", actualSHA[:12])
+	if !opts.json {
+		fmt.Fprintf(out, "Verified SHA256 checksum (%s).\n", actualSHA[:12])
+	}
 
 	// Attestation verification gate: fail closed if attestation fails or is required and missing
 	if !opts.skipAttestation {
@@ -663,8 +817,10 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 			_ = os.Remove(tmpPath)
 			return fmt.Errorf("provenance attestation verification gate failed: %w", err)
 		}
-		fmt.Fprintln(out, "Verified GitHub build provenance attestation.")
-	} else {
+		if !opts.json {
+			fmt.Fprintln(out, "Verified GitHub build provenance attestation.")
+		}
+	} else if !opts.json {
 		fmt.Fprintln(out, "Warning: Skipping build provenance attestation verification (--skip-attestation).")
 	}
 
@@ -691,6 +847,19 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 	// Best-effort cleanup of .old binary (on Windows this may remain until next update)
 	_ = os.Remove(oldPath)
 
+	if opts.json {
+		updated := true
+		return writeSelfUpdateJSON(out, selfUpdateJSONOutput{
+			SchemaVersion:   "1.0.0",
+			CurrentVersion:  currentVersion,
+			LatestVersion:   rel.TagName,
+			UpdateAvailable: true,
+			Channel:         channel,
+			ReleaseURL:      rel.HTMLURL,
+			Updated:         &updated,
+		})
+	}
+
 	fmt.Fprintf(out, "Successfully updated Patchwork to %s!\n", rel.TagName)
 	return nil
 }
@@ -705,24 +874,37 @@ func newSelfUpdateCmd() *cobra.Command {
 		Long:    `Check GitHub Releases for a newer version of Patchwork and update the executable in-place.`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.offline {
+			if opts.offline || isEnvTruthy("PATCHWORK_OFFLINE") {
 				return errors.New("self-update requires network access and cannot run in --offline mode")
 			}
 
-			exePath, err := os.Executable()
+			cfg, _ := config.Load()
+			resolvedChannel, err := resolveChannel(opts.channel, opts.prerelease, cfg)
 			if err != nil {
-				return fmt.Errorf("failed to determine current executable path: %w", err)
+				return err
 			}
-			exePath, err = filepath.EvalSymlinks(exePath)
-			if err != nil {
-				return fmt.Errorf("failed to resolve executable symlink: %w", err)
+			opts.channel = resolvedChannel
+
+			var exePath string
+			if !opts.check {
+				exePath, err = os.Executable()
+				if err != nil {
+					return fmt.Errorf("failed to determine current executable path: %w", err)
+				}
+				exePath, err = filepath.EvalSymlinks(exePath)
+				if err != nil {
+					return fmt.Errorf("failed to resolve executable symlink: %w", err)
+				}
 			}
 
-			client := httputil.NewClient(httputil.WithTimeout(metadataTimeout))
+			client := selfUpdateHTTPClient
+			if client == nil {
+				client = httputil.NewClient(httputil.WithTimeout(metadataTimeout))
+			}
 			return performSelfUpdate(
 				cmd.Context(),
 				client,
-				defaultGitHubAPI,
+				selfUpdateAPIBaseURL,
 				version,
 				runtime.GOOS,
 				runtime.GOARCH,
@@ -737,6 +919,10 @@ func newSelfUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.skipAttestation, "skip-attestation", false, "Skip build provenance attestation verification")
 	cmd.Flags().BoolVar(&opts.requireAttestation, "require-attestation", false, "Require build provenance attestation even in offline/custom environments")
 	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access")
+	cmd.Flags().BoolVar(&opts.check, "check", false, "Check for a newer version without downloading or replacing the binary")
+	cmd.Flags().BoolVar(&opts.prerelease, "prerelease", false, "Include prerelease versions (shorthand for --channel prerelease)")
+	cmd.Flags().StringVar(&opts.channel, "channel", "", "Release channel to check or update from (stable or prerelease)")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output self-update status in JSON format")
 
 	return cmd
 }
