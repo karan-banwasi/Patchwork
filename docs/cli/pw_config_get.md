@@ -4,7 +4,7 @@ Get the value of a configuration key
 
 ### Synopsis
 
-Display the current value for a given configuration setting. Supported keys: defaults.timeout, defaults.accept_agreements, defaults.trust_repository, defaults.no_refresh, disabled_managers, accept_agreements, pins, pinned_packages.
+Display the current value for a given configuration setting. Supported keys: defaults.timeout, defaults.accept_agreements, defaults.trust_repository, defaults.no_refresh, defaults.level, defaults.exclude, defaults.channel, disabled_managers, accept_agreements, pins, pinned_packages.
 
 ```
 pw config get <key> [flags]

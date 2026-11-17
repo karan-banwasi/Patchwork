@@ -10,6 +10,10 @@ This document lists all environment variables recognized, inspected, or honored 
 | :--- | :--- | :--- | :--- |
 | `PATCHWORK_CONFIG` | Path | `%APPDATA%\Patchwork\config.json` (Windows)<br>`~/Library/Application Support/Patchwork/config.json` (macOS)<br>`~/.config/Patchwork/config.json` (Linux) | Overrides the location of the primary configuration file (used for persistent package pins and options). |
 | `PATCHWORK_CACHE` | Path | `%LOCALAPPDATA%\Patchwork\updates-cache.json` (Windows)<br>`~/Library/Caches/Patchwork/updates-cache.json` (macOS)<br>`~/.cache/Patchwork/updates-cache.json` (Linux) | Overrides the location of the short-lived update check completion cache. |
+| `PATCHWORK_HISTORY` | Path | `%APPDATA%\Patchwork\history.jsonl` (Windows)<br>`~/Library/Application Support/Patchwork/history.jsonl` (macOS)<br>`~/.config/Patchwork/history.jsonl` (Linux) | Overrides the location of the upgrade history JSONL log used by `pw history` and `pw rollback`. |
+| `PATCHWORK_SCHEDULE_STATE` | Path | `%APPDATA%\Patchwork\schedule.json` (Windows)<br>`~/Library/Application Support/Patchwork/schedule.json` (macOS)<br>`~/.config/Patchwork/schedule.json` (Linux) | Overrides the location of the scheduled check state file used by `pw schedule`. |
+| `PATCHWORK_SELFUPDATE_CACHE` | Path | `%LOCALAPPDATA%\Patchwork\selfupdate-cache.json` (Windows)<br>`~/Library/Caches/Patchwork/selfupdate-cache.json` (macOS)<br>`~/.cache/Patchwork/selfupdate-cache.json` (Linux) | Overrides the location of the 24-hour passive self-update check cache. |
+| `PATCHWORK_NO_UPDATE_CHECK` | Boolean (`1`, `true`) | Unset | When set to `1` or `true`, disables passive background self-update checks and notices. |
 | `PATCHWORK_OFFLINE` | Boolean (`1`, `true`) | Unset | When set to `1` or `true`, forces offline mode equivalent to passing the `--offline` CLI flag. |
 
 ---

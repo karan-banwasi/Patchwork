@@ -11,7 +11,11 @@ A CLI tool to better manage package updates. Built natively in Go for Windows, m
 - **Auto-Elevation (UAC)**: Automatically prompts for Administrator privileges via Windows UAC when upgrading Chocolatey packages from a non-elevated shell.
 - **Machine-Readable Output**: Export pending updates as structured JSON (`--json`) or tab-separated rows (`--quiet`) for status bars (Oh My Posh, Yasb, GlazeWM) and automation scripts.
 - **System Diagnostics & Cache Cleanup**: Inspect detected package managers and versions with `pw doctor` (`pw status`) and clean up old versions/caches with `pw cleanup` (`pw clean`).
-- **In-Place Self-Updates**: Run `pw self-update` to update the Patchwork binary directly from GitHub Releases with universal SHA-256 checksum verification and Sigstore build provenance attestation across Windows, macOS, and Linux.
+- **In-Place Self-Updates**: Run `pw self-update` (with `--check`, `--prerelease`/`--channel`, and `--json` support, plus a cached 24h passive update notice) to update the Patchwork binary directly from GitHub Releases with universal SHA-256 checksum verification and Sigstore build provenance attestation across Windows, macOS, and Linux.
+- **Upgrade Policies, Changelog Previews & Parallel Execution**: Filter upgrades with `--exclude` glob patterns and semver ceiling `--level` (`patch`, `minor`, `major`), inspect release/package links with `--changelog`, confirm non-interactively with `--yes`, and upgrade across managers concurrently (`--concurrency` / `-j`).
+- **Scheduled Background Checks & Notifications**: Register native OS background checks (`pw schedule enable/disable/status/run`) via Windows Task Scheduler, macOS `launchd`, or Linux `systemd --user`/`crontab` with desktop notifications and `--bar` status summaries.
+- **Upgrade History & Rollback**: Automatically log every upgrade run (`pw history`) and roll back individual packages or entire runs (`pw rollback`).
+- **Machine Profile Export & Import**: Export installed packages and pins to a portable `Patchfile` or JSON (`pw export`) and provision or restore a machine (`pw import`).
 
 ## Supported Package Managers
 

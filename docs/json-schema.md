@@ -28,6 +28,7 @@ Emitted by `pw check --json`.
 | `schema_version` | string | The schema version contract (`"1.0.0"`). |
 | `count` | integer | Total number of updates available across active managers. |
 | `pinned_skipped` | integer | Number of discovered updates suppressed because the package was pinned. |
+| `policy_skipped` | integer | Number of discovered updates suppressed by `--exclude` or `--level` upgrade policies (omitted if 0). |
 | `updates` | array of objects | List of available package updates. |
 
 Each object in `updates` contains:
@@ -37,7 +38,8 @@ Each object in `updates` contains:
 | `id` | string | Canonical package identifier used for upgrades and pinning. |
 | `version` | string | Currently installed version. |
 | `available_version` | string | New version available from the repository/bucket. |
-| `manager` | string | Canonical lowercase name of the package manager (`brew`, `winget`, `scoop`, `choco`, `npm`, `dotnet`, `uv`, `cargo`, `psresource`). |
+| `manager` | string | Canonical lowercase name of the package manager (`brew`, `winget`, `scoop`, `choco`, `npm`, `dotnet`, `uv`, `cargo`, `psresource`, etc.). |
+| `changelog_url` | string (optional) | Deterministic release/package URL included when `--changelog` is passed. |
 
 ### Example Payload
 ```json
@@ -85,7 +87,7 @@ Each object in `results` contains:
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `package` | object | The package metadata (`name`, `id`, `version`, `available_version`, `manager`). |
-| `status` | string | Final state: `"Succeeded"`, `"Failed"`, `"Dry-Run"`, or `"Skipped"`. |
+| `status` | string | Final state: `"Succeeded"`, `"Failed"`, `"Dry-Run"`, `"Skipped"`, `"Skipped (pinned)"`, `"Skipped (excluded)"`, or `"Skipped (level)"`. |
 | `duration_ms` | integer | Execution time for this package in milliseconds. |
 | `duration` | string | Human-readable duration string (e.g. `"1.24s"`). |
 | `error` | string or null | Error message if failed, or `null` if succeeded/dry-run. |
@@ -190,4 +192,54 @@ The primary configuration file located at `PATCHWORK_CONFIG` (or default OS path
 | Property | Type | Description |
 | :--- | :--- | :--- |
 | `pinned_packages` | array of strings | Package IDs to skip during check and upgrade operations. Prefixed with `<manager>:` to scope to a specific package manager, or bare ID to apply globally. |
-| `accept_agreements` | boolean (optional) | When `true`, automatically accepts package agreements in supported managers (e.g., Winget). |
+| `pins` | array of objects (optional) | Rich pin entries with optional `manager`, `version` constraint, `reason`, and `expires_at`. |
+| `disabled_managers` | array of strings (optional) | Package manager names disabled globally. |
+| `accept_agreements` | boolean (optional) | Legacy top-level flag to automatically accept package agreements. |
+| `defaults` | object (optional) | Persistent CLI defaults: `timeout`, `accept_agreements`, `trust_repository`, `no_refresh`, `level` (`"patch"`, `"minor"`, `"major"`), `exclude` (glob patterns), `channel` (`"stable"`, `"prerelease"`). |
+
+---
+
+## 6. Schedule Status Schema (`pw schedule status --json`)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `schema_version` | string | `"1.0.0"` |
+| `enabled` | boolean | Whether periodic scheduling is enabled in state. |
+| `registered` | boolean | Whether the OS-level task/unit/agent is currently registered. |
+| `interval` | string (optional) | Configured check interval (e.g. `"6h"`, `"daily"`). |
+| `notify` | boolean | Whether desktop notifications are enabled. |
+| `last_run` | string (optional) | RFC3339 timestamp of the last scheduled run. |
+| `last_count` | integer | Number of effective updates found on the last run. |
+| `cached_count` | integer | Number of effective updates in the local update cache. |
+| `cache_valid` | boolean | Whether the update cache is populated. |
+| `updated_at` | string (optional) | RFC3339 timestamp when schedule state was last updated. |
+| `state_path` | string | Path to the schedule state JSON file. |
+
+---
+
+## 7. History & Rollback Schemas (`pw history --json`, `pw rollback --json`)
+
+- `pw history --json`: emits `{ "schema_version": "1.0.0", "count": <int>, "entries": [...] }` (or `{ "schema_version": "1.0.0", "cleared": true }` with `--clear`). Each entry includes `schema_version`, `run_id`, `timestamp`, `manager_filter`, `items` (`name`, `id`, `manager`, `from_version`, `to_version`, `status`, `duration_ms`, `error`), `succeeded`, `failed`, and `skipped`.
+- `pw rollback --json`: uses the same summary schema as `pw upgrade --json`.
+
+---
+
+## 8. Machine Profile Export & Import Schemas (`pw export --json`, `pw import --json`)
+
+- `pw export --json`: emits `{ "schema_version": "1.0.0", "created_at": "<RFC3339>", "packages": [{ "manager", "id", "name", "version" }], "pins": [...] }`.
+- `pw import --json`: emits `{ "schema_version": "1.0.0", "dry_run": <bool>, "results": [{ "manager", "id", "version", "status", "error" }], "pins_restored": <int>, "summary": { "total", "installed", "skipped", "failed", "would_install" } }`.
+
+---
+
+## 9. Self-Update Schema (`pw self-update --json`)
+
+Emitted by `pw self-update --json` (with `--check` or full update):
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `schema_version` | string | `"1.0.0"` |
+| `current_version` | string | Current `pw` version. |
+| `latest_version` | string | Latest release tag found for the active channel. |
+| `update_available` | boolean | Whether `latest_version` is newer than `current_version`. |
+| `channel` | string | Resolved release channel (`"stable"` or `"prerelease"`). |
+| `release_url` | string | GitHub release HTML URL. |
+| `updated` | boolean (optional) | Present on non-`--check` runs indicating whether the binary was updated. |
