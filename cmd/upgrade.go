@@ -390,7 +390,7 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 
-			var execOut io.Writer = out
+			execOut := out
 			if opts.json {
 				execOut = io.Discard
 			} else {

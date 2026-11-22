@@ -249,7 +249,7 @@ func (t *RetryTransport) calculateDelay(attempt int, resp *http.Response) time.D
 	delay := time.Duration(float64(t.BaseDelay) * multiplier)
 
 	// Add up to 25% jitter
-	jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))
+	jitter := time.Duration(rand.Float64() * 0.25 * float64(delay)) //nolint:gosec // G404: non-cryptographic jitter for HTTP retry backoff
 	delay = delay + jitter
 
 	if delay > t.MaxDelay {

@@ -32,6 +32,19 @@ linters:
         - G301 # Standard user config/agent dirs (e.g. LaunchAgents, systemd/user) use 0755
         - G304 # User-specified config, history, and profile paths are intentional CLI inputs
         - G306 # Generated scripts/manifests/docs use standard 0644 permissions
+        - G702 # Patchwork intentionally launches user-configured $EDITOR and validated package manager CLIs
+        - G703 # Patchwork probes $HOME/$LOCALAPPDATA/$ASDF_DATA_DIR tool locations via os.Stat
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001
+        - -QF1003
   exclusions:
     generated: lax
     presets:

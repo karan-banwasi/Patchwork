@@ -134,17 +134,15 @@ func TestChangelogURLAndRenderPreview(t *testing.T) {
 }
 
 type parallelTestManager struct {
-	name       string
-	delay      time.Duration
-	deferIDs   map[string]bool
-	activeNow  *atomic.Int32
-	maxActive  *atomic.Int32
-	mu         sync.Mutex
-	upgraded   []string
-	events     *[]string
-	eventsMu   *sync.Mutex
-	stdout     bytes.Buffer
-	ioCallback func(id string) string
+	name      string
+	delay     time.Duration
+	deferIDs  map[string]bool
+	activeNow *atomic.Int32
+	maxActive *atomic.Int32
+	mu        sync.Mutex
+	upgraded  []string
+	events    *[]string
+	eventsMu  *sync.Mutex
 }
 
 func (m *parallelTestManager) Name() string                         { return m.name }

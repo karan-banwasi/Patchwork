@@ -181,7 +181,7 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 		}
 
 		if total > pageSize {
-			b.WriteString(fmt.Sprintf("\x1b[2K  \x1b[90m(Move up/down to reveal more items — %d/%d)\x1b[0m\r\n", cursor+1, total))
+			fmt.Fprintf(&b, "\x1b[2K  \x1b[90m(Move up/down to reveal more items — %d/%d)\x1b[0m\r\n", cursor+1, total)
 			lines++
 		}
 
@@ -221,13 +221,14 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 			continue
 		}
 
-		for i := 0; i < n; {
-			ch := buf[i]
+		data := buf[:n]
+		for i := 0; i < len(data); {
+			ch := data[i]
 
 			// ANSI escape sequences (\x1b[A, \x1bOA, etc.) or standalone Esc
 			if ch == 0x1b {
-				if i+2 < n && (buf[i+1] == '[' || buf[i+1] == 'O') {
-					code := buf[i+2]
+				if rem := data[i:]; len(rem) >= 3 && (rem[1] == '[' || rem[1] == 'O') {
+					code := rem[2]
 					i += 3
 					switch code {
 					case 'A': // Up arrow
@@ -248,8 +249,8 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 						cursor = total - 1
 					default:
 						// Consume trailing tilde for sequences like \x1b[5~ (PageUp) / \x1b[6~ (PageDown)
-						for i < n && buf[i-1] != '~' && (buf[i] >= '0' && buf[i] <= '9' || buf[i] == ';' || buf[i] == '~') {
-							if buf[i] == '~' {
+						for i < len(data) && data[i-1] != '~' && (data[i] >= '0' && data[i] <= '9' || data[i] == ';' || data[i] == '~') {
+							if data[i] == '~' {
 								switch code {
 								case '5': // PageUp
 									cursor -= pageSize
@@ -277,25 +278,27 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 			}
 
 			// Windows legacy scan-code prefix (0xE0 or 0x00)
-			if (ch == 0xE0 || ch == 0x00) && i+1 < n {
-				scan := buf[i+1]
-				i += 2
-				switch scan {
-				case 0x48: // Up
-					cursor = (cursor - 1 + total) % total
-				case 0x50: // Down
-					cursor = (cursor + 1) % total
-				case 0x4D: // Right -> select all
-					for idx := range checked {
-						checked[idx] = true
+			if ch == 0xE0 || ch == 0x00 {
+				if rem := data[i:]; len(rem) >= 2 {
+					scan := rem[1]
+					i += 2
+					switch scan {
+					case 0x48: // Up
+						cursor = (cursor - 1 + total) % total
+					case 0x50: // Down
+						cursor = (cursor + 1) % total
+					case 0x4D: // Right -> select all
+						for idx := range checked {
+							checked[idx] = true
+						}
+					case 0x4B: // Left -> select none
+						for idx := range checked {
+							checked[idx] = false
+						}
 					}
-				case 0x4B: // Left -> select none
-					for idx := range checked {
-						checked[idx] = false
-					}
+					renderFrame()
+					continue
 				}
-				renderFrame()
-				continue
 			}
 
 			i++
@@ -323,10 +326,6 @@ func runInteractiveSelectLoop(r io.Reader, w io.Writer, message string, candidat
 				}
 				renderFrame()
 			case '\r', '\n': // Enter confirms selection
-				// Swallow immediate companion in CRLF if present in same buffer
-				if ch == '\r' && i < n && buf[i] == '\n' {
-					i++
-				}
 				renderConfirmed()
 				var selected []pm.PackageUpdate
 				for idx, isChecked := range checked {

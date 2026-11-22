@@ -360,9 +360,7 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	closed = true
 
-	if err := os.Chmod(tmpName, perm); err != nil {
-		// Non-fatal on Windows
-	}
+	_ = os.Chmod(tmpName, perm) // Non-fatal on Windows
 	return os.Rename(tmpName, path)
 }
 

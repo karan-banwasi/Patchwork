@@ -125,7 +125,7 @@ func isNoApplicableUpgradeExitCode(err error) bool {
 	if !errors.As(err, &exitErr) {
 		return false
 	}
-	code := uint32(exitErr.ExitCode())
+	code := uint32(exitErr.ExitCode()) //nolint:gosec // G115: intentional two's-complement HRESULT mask (0x8A15002B / -1978335189)
 	return code == WingetNoApplicableUpgradeExitCode
 }
 
