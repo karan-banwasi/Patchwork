@@ -43,6 +43,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
         
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -81,12 +83,54 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
+      - name: Upload coverage profile
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-linux
+          path: coverage.txt
+          retention-days: 14
+
       - name: Run govulncheck
         if: matrix.os == 'ubuntu-latest'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+      - name: Generate SBOM
+        if: matrix.os == 'ubuntu-latest'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: patchwork.spdx.json
+          artifact-name: patchwork-sbom-spdx
+          upload-artifact: true
+          upload-artifact-retention: 14
+          upload-release-assets: false
+
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+
   release:
-    needs: test
+    needs: [test, lint]
     if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
@@ -109,6 +153,17 @@ jobs:
         with:
           go-version-file: 'go.mod'
           check-latest: true
+
+      - name: Generate Release SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: patchwork.spdx.json
+          artifact-name: patchwork-release-sbom
+          upload-artifact: true
+          upload-artifact-retention: 30
+          upload-release-assets: false
 
       - name: Build and Create Release
         id: build_release
@@ -198,7 +253,11 @@ jobs:
           # Compute SHA256 hashes and generate Winget manifest files for the release
           SHA_X64=$(sha256sum pw.exe | awk '{print toupper($1)}')
           SHA_ARM64=$(sha256sum pw-arm64.exe | awk '{print toupper($1)}')
-          
+          SHA_X64_LOWER=$(printf '%s' "$SHA_X64" | tr '[:upper:]' '[:lower:]')
+          SHA_ARM64_LOWER=$(printf '%s' "$SHA_ARM64" | tr '[:upper:]' '[:lower:]')
+          echo "sha_x64=$SHA_X64_LOWER" >> "$GITHUB_OUTPUT"
+          echo "sha_arm64=$SHA_ARM64_LOWER" >> "$GITHUB_OUTPUT"
+
           sed -e "s/PackageVersion: .*/PackageVersion: $NEW_VERSION/" \
               winget/KaranBanwasi.Patchwork.yaml > KaranBanwasi.Patchwork.yaml
           sed -e "s/PackageVersion: .*/PackageVersion: $NEW_VERSION/" \
@@ -222,13 +281,14 @@ jobs:
             echo "ManifestType: installer"
             echo "ManifestVersion: 1.12.0"
           } > KaranBanwasi.Patchwork.installer.yaml
-          
-          # Create a GitHub Release as a draft with the compiled binaries and Winget manifests attached
+
+          # Create a GitHub Release as a draft with the compiled binaries, SBOM, and Winget manifests attached
           gh release create "$NEW_TAG" \
             pw.exe pw-arm64.exe \
             pw-darwin-arm64 pw-darwin-amd64 \
             pw-linux-amd64 pw-linux-arm64 \
             SHA256SUMS \
+            patchwork.spdx.json \
             KaranBanwasi.Patchwork.yaml \
             KaranBanwasi.Patchwork.locale.en-US.yaml \
             KaranBanwasi.Patchwork.installer.yaml \
@@ -245,6 +305,19 @@ jobs:
             pw-linux-amd64
             pw-linux-arm64
             SHA256SUMS
+            patchwork.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            pw.exe
+            pw-arm64.exe
+            pw-darwin-arm64
+            pw-darwin-amd64
+            pw-linux-amd64
+            pw-linux-arm64
+          sbom-path: patchwork.spdx.json
 
       - name: Publish Release
         env:
@@ -252,6 +325,52 @@ jobs:
           NEW_TAG: ${{ steps.build_release.outputs.tag }}
         run: |
           gh release edit "$NEW_TAG" --draft=false
+
+      - name: Sync Distribution Manifests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NEW_VERSION: ${{ steps.build_release.outputs.version }}
+          NEW_TAG: ${{ steps.build_release.outputs.tag }}
+          SHA_X64: ${{ steps.build_release.outputs.sha_x64 }}
+          SHA_ARM64: ${{ steps.build_release.outputs.sha_arm64 }}
+        run: |
+          if [[ "$NEW_TAG" == *-* ]]; then
+            echo "Pre-release tag $NEW_TAG; skipping manifest sync on main."
+            exit 0
+          fi
+
+          TARBALL_PATH="/tmp/patchwork-${NEW_TAG}.tar.gz"
+          curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
+            "https://github.com/${GH_REPO}/archive/refs/tags/${NEW_TAG}.tar.gz" \
+            -o "$TARBALL_PATH"
+          TARBALL_SHA=$(sha256sum "$TARBALL_PATH" | awk '{print tolower($1)}')
+
+          rm -rf /tmp/manifest-sync
+          git clone --branch main --single-branch --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" \
+            /tmp/manifest-sync
+          cd /tmp/manifest-sync
+
+          bash "$GITHUB_WORKSPACE/scripts/update-manifests.sh" \
+            --version "$NEW_VERSION" \
+            --tag "$NEW_TAG" \
+            --sha-x64 "$SHA_X64" \
+            --sha-arm64 "$SHA_ARM64" \
+            --tarball-sha "$TARBALL_SHA" \
+            --repo "$GH_REPO" \
+            --root .
+
+          if git diff --quiet; then
+            echo "Manifests already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/pw.rb bucket/pw.json winget/KaranBanwasi.Patchwork.yaml winget/KaranBanwasi.Patchwork.locale.en-US.yaml winget/KaranBanwasi.Patchwork.installer.yaml
+          git commit -m "chore(dist): update Formula, Scoop bucket, and Winget manifests for ${NEW_TAG}"
+          git push origin HEAD:main
 
       - name: Publish to winget-pkgs
         if: (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')

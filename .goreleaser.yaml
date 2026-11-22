@@ -1,4 +1,6 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Note: .github/workflows/release.yml is the primary CI release pipeline;
+# .goreleaser.yaml mirrors it for GoReleaser runs.
 version: 2
 
 project_name: pw
@@ -31,10 +33,10 @@ builds:
 archives:
   # 1. Standard compressed archives for package managers (Homebrew, Scoop, tarball users)
   - id: default
-    format: tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     name_template: "pw_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE*
@@ -42,7 +44,7 @@ archives:
 
   # 2. Standalone raw binaries matching cmd/selfupdate.go, install.ps1, and install.sh naming
   - id: raw-binaries
-    format: binary
+    formats: [binary]
     name_template: >-
       {{- if and (eq .Os "windows") (eq .Arch "amd64") }}pw
       {{- else if and (eq .Os "windows") (eq .Arch "arm64") }}pw-arm64
@@ -69,9 +71,9 @@ brews:
   - name: pw
     repository:
       owner: karan-banwasi
-      name: homebrew-tap
+      name: Patchwork
       branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ .Env.GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/karan-banwasi/Patchwork"
     description: "Cross-platform CLI tool to check and manage package updates across multiple package managers"
@@ -86,9 +88,10 @@ scoops:
   - name: pw
     repository:
       owner: karan-banwasi
-      name: scoop-bucket
+      name: Patchwork
       branch: main
-      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: bucket
     homepage: "https://github.com/karan-banwasi/Patchwork"
     description: "Cross-platform CLI tool to check and manage package updates across multiple package managers"
     license: "MIT"
