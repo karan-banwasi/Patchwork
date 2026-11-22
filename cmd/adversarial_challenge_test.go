@@ -105,10 +105,6 @@ func generateAdversarialBundle(t *testing.T, opts bundleGenOptions) []byte {
 		t.Fatalf("failed to marshal statement: %v", err)
 	}
 
-	if opts.tamperPayloadAfterSigning != nil {
-		// Used later
-	}
-
 	payloadType := opts.payloadType
 	if payloadType == "" {
 		payloadType = "application/vnd.in-toto+json"

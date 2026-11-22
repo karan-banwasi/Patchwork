@@ -133,7 +133,7 @@ func Execute() {
 
 	cmd := NewRootCmd()
 	err := cmd.ExecuteContext(ctx)
-	if err != nil || (ctx != nil && ctx.Err() != nil) {
+	if err != nil || ctx.Err() != nil {
 		os.Exit(exitcodes.Determine(ctx, err))
 	}
 }

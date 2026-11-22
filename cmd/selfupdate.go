@@ -160,11 +160,11 @@ func detectManagedInstall(exePath string) error {
 	normalized := strings.ReplaceAll(strings.ToLower(exePath), "/", `\`)
 	switch {
 	case strings.Contains(normalized, `\microsoft\winget\packages\`) || strings.Contains(normalized, `\microsoft\winget\links\`):
-		return fmt.Errorf("Patchwork was installed with winget; run: winget upgrade KaranBanwasi.Patchwork (or pass --force to override)")
+		return fmt.Errorf("patchwork was installed with winget; run: winget upgrade KaranBanwasi.Patchwork (or pass --force to override)")
 	case strings.Contains(normalized, `\scoop\apps\`) || strings.Contains(normalized, `\scoop\shims\`):
-		return fmt.Errorf("Patchwork was installed with Scoop; run: scoop update patchwork (or pass --force to override)")
+		return fmt.Errorf("patchwork was installed with Scoop; run: scoop update pw (or pass --force to override)")
 	case strings.Contains(strings.ToLower(exePath), "/cellar/patchwork/") || strings.Contains(strings.ToLower(exePath), "/opt/homebrew/") || strings.Contains(strings.ToLower(exePath), "/home/linuxbrew/") || strings.Contains(strings.ToLower(exePath), "/.linuxbrew/"):
-		return fmt.Errorf("Patchwork was installed with Homebrew; run: brew upgrade patchwork (or pass --force to override)")
+		return fmt.Errorf("patchwork was installed with Homebrew; run: brew upgrade pw (or pass --force to override)")
 	}
 	return nil
 }
@@ -819,7 +819,7 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		fmt.Fprintln(out, "Warning: Skipping build provenance attestation verification (--skip-attestation).")
 	}
 
-	_ = os.Chmod(tmpPath, 0755)
+	_ = os.Chmod(tmpPath, 0755) //nolint:gosec // G302: self-updated binary must be executable
 
 	oldPath := exePath + ".old"
 	_ = os.Remove(oldPath)

@@ -20,7 +20,6 @@ type mockUpgradeManager struct {
 	upgraded  []string
 	bulk      []string
 	err       error
-	isBulk    bool
 	deferIDs  map[string]bool
 }
 

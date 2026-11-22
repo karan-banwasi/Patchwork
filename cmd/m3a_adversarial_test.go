@@ -229,10 +229,9 @@ func TestAdversarial_CheckJson_WithFilterAndPinned(t *testing.T) {
 }
 
 type mockDeferrerManager struct {
-	name      string
-	deferIDs  map[string]bool
-	upgrades  []string
-	available bool
+	name     string
+	deferIDs map[string]bool
+	upgrades []string
 }
 
 func (m *mockDeferrerManager) Name() string                         { return m.name }

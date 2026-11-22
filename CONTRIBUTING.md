@@ -19,7 +19,7 @@ All contributors and participants in the Patchwork project are expected to adher
 - **Git**: Installed and configured.
 - **Operating System**: Windows, macOS, or Linux.
 - **Optional Tools**:
-  - `golangci-lint`: For local linting.
+  - `golangci-lint`: For local linting (`v2`, configured in `.golangci.yml`).
   - `govulncheck`: For vulnerability auditing (`go install golang.org/x/vuln/cmd/govulncheck@latest`).
 
 ### Clone and Build
@@ -116,6 +116,11 @@ go test -v -race ./...
 Run static analysis:
 ```bash
 go vet ./...
+```
+
+Run local linting (configured via `.golangci.yml`, requires `golangci-lint` v2):
+```bash
+golangci-lint run
 ```
 
 Run vulnerability scanning:
