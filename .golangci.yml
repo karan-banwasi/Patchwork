@@ -1,0 +1,45 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - os.Remove
+        - os.RemoveAll
+    gosec:
+      excludes:
+        - G104 # Covered by errcheck with explicit exclusions
+        - G204 # Patchwork invokes external package manager CLIs via validated pm.Runner args
+        - G301 # Standard user config/agent dirs (e.g. LaunchAgents, systemd/user) use 0755
+        - G304 # User-specified config, history, and profile paths are intentional CLI inputs
+        - G306 # Generated scripts/manifests/docs use standard 0644 permissions
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - bodyclose

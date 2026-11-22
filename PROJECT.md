@@ -6,7 +6,7 @@
 - **Core Domain**: `internal/pm` defining `Manager` interface, optional extension interfaces (`Locator`, `Cleaner`, `Deferrer`, `Refresher`, `BulkUpgrader`, `DetailedBulkUpgrader`, `OfflineConfigurable`, `NetworkDependent`, `IOConfigurable`, `OptionsConfigurable`, `WarningFetcher`, `TimeoutProvider`, `Lister`, `Installer`, `Rollbackable`), and `Runner` abstraction.
 - **Package Managers (24 Drivers)**: `internal/brew`, `internal/mas`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/psresource`, `internal/apt`, `internal/dnf`, `internal/pacman`, `internal/zypper`, `internal/flatpak`, `internal/snap`, `internal/npm`, `internal/pnpm`, `internal/bun`, `internal/dotnet`, `internal/uv`, `internal/pipx`, `internal/cargo`, `internal/rustup`, `internal/gem`, `internal/mise`, `internal/asdf`, `internal/vscode`.
 - **Core Subsystems**: `internal/upgrade`, `internal/version`, `internal/config`, `internal/history`, `internal/profile`, `internal/schedule`, `internal/httputil`, `internal/exitcodes`.
-- **CI / Distribution**: `.github/workflows/release.yml` (plus GitHub Default Setup CodeQL and `.github/dependabot.yml`), `.goreleaser.yaml`, `install.ps1`, `install.sh`, `winget/`, `Formula/`, `bucket/`.
+- **CI / Distribution**: `.github/workflows/release.yml` and `.github/workflows/scorecard.yml` (plus `.golangci.yml`, GitHub Default Setup CodeQL, and `.github/dependabot.yml`), `.goreleaser.yaml`, `install.ps1`, `install.sh`, `winget/`, `Formula/`, `bucket/`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
@@ -66,4 +66,4 @@
 - `internal/pm/`: Package manager core interfaces (`Manager`, extension interfaces, `Registry`, `Runner`).
 - `internal/<manager>/`: Concrete drivers for 24 supported package managers.
 - `internal/{config,exitcodes,history,httputil,profile,schedule,upgrade,version}/`: Shared subsystems and domain logic.
-- `.github/workflows/`: Unified CI and Release workflow (`release.yml`), alongside GitHub Default Setup CodeQL and `.github/dependabot.yml`.
+- `.github/workflows/`: Unified CI and Release workflow (`release.yml`) and OpenSSF Scorecard workflow (`scorecard.yml`), alongside `.golangci.yml`, GitHub Default Setup CodeQL, and `.github/dependabot.yml`.
