@@ -6,7 +6,7 @@
 - **Core Domain**: `internal/pm` defining `Manager` interface, optional extension interfaces (`Locator`, `Cleaner`, `Deferrer`, `Refresher`, `BulkUpgrader`, `DetailedBulkUpgrader`, `OfflineConfigurable`, `NetworkDependent`, `IOConfigurable`, `OptionsConfigurable`, `WarningFetcher`, `TimeoutProvider`, `Lister`, `Installer`, `Rollbackable`), and `Runner` abstraction.
 - **Package Managers (24 Drivers)**: `internal/brew`, `internal/mas`, `internal/winget`, `internal/scoop`, `internal/choco`, `internal/psresource`, `internal/apt`, `internal/dnf`, `internal/pacman`, `internal/zypper`, `internal/flatpak`, `internal/snap`, `internal/npm`, `internal/pnpm`, `internal/bun`, `internal/dotnet`, `internal/uv`, `internal/pipx`, `internal/cargo`, `internal/rustup`, `internal/gem`, `internal/mise`, `internal/asdf`, `internal/vscode`.
 - **Core Subsystems**: `internal/upgrade`, `internal/version`, `internal/config`, `internal/history`, `internal/profile`, `internal/schedule`, `internal/httputil`, `internal/exitcodes`.
-- **CI / Distribution**: `.github/workflows/{ci,release,codeql}.yml`, `.goreleaser.yaml`, `install.ps1`, `install.sh`, `winget/`, `Formula/`, `bucket/`.
+- **CI / Distribution**: `.github/workflows/release.yml` (plus GitHub Default Setup CodeQL and `.github/dependabot.yml`), `.goreleaser.yaml`, `install.ps1`, `install.sh`, `winget/`, `Formula/`, `bucket/`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
@@ -51,7 +51,7 @@
 | M3 | Core Architecture & Engine Refactoring | Issues #27, #31–#39: Upgrade pipeline refactor, timeout honoring, downgrade prevention, structured warnings, TUI selector, HTTP retry/offline client, golden fixtures, exit codes, JSON schemas | M1 | DONE |
 | M4 | Governance & Documentation Alignment | Issues #40–#44: Cross-platform README, SECURITY.md, CONTRIBUTING.md, templates, ARCHITECTURE.md, developer guides, generated CLI docs | none | DONE |
 | M5 | Distribution & Extended Features | Issues #45–#52: Distribution (`cmd/pw`, GoReleaser, Homebrew tap, Scoop bucket, `install.sh`), rich config & pins, 24 managers, policies/parallelism/changelog, scheduler & notifications, history & rollback, profile export/import, self-update notice | M2, M3 | DONE |
-| M6 | Cleanup, Bug Fixes & Final CI Validation | Issues #55–#61: Dead code removal, driver bug fixes, shared helpers, documentation sync, multi-OS CI verification | M1–M5 | IN PROGRESS |
+| M6 | Cleanup, Bug Fixes & Final CI Validation | Issues #55–#61: Dead code removal, driver bug fixes, shared helpers, documentation sync, multi-OS CI verification | M1–M5 | DONE |
 
 ## Interface Contracts
 ### Self-Update Asset & Checksum Resolver (`cmd/selfupdate.go`)
@@ -66,4 +66,4 @@
 - `internal/pm/`: Package manager core interfaces (`Manager`, extension interfaces, `Registry`, `Runner`).
 - `internal/<manager>/`: Concrete drivers for 24 supported package managers.
 - `internal/{config,exitcodes,history,httputil,profile,schedule,upgrade,version}/`: Shared subsystems and domain logic.
-- `.github/workflows/`: CI, CodeQL, and Release workflows (`ci.yml`, `codeql.yml`, `release.yml`).
+- `.github/workflows/`: Unified CI and Release workflow (`release.yml`), alongside GitHub Default Setup CodeQL and `.github/dependabot.yml`.
