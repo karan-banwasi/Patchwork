@@ -1,8 +1,8 @@
 class Pw < Formula
   desc "Cross-platform CLI tool to check and manage package updates across multiple package managers"
   homepage "https://github.com/karan-banwasi/Patchwork"
-  url "https://github.com/karan-banwasi/Patchwork/archive/refs/tags/v0.3.1.tar.gz"
-  sha256 "9ccbf395de440a6564e6bf0714a45ac3955ca40b3a4d017c77bf0b776853b1e9"
+  url "https://github.com/karan-banwasi/Patchwork/archive/refs/tags/v0.3.2.tar.gz"
+  sha256 "9432bcdf65896507cafc034ebae758b4d6308aa63455f837da5f061e1df72461"
   license "MIT"
   head "https://github.com/karan-banwasi/Patchwork.git", branch: "main"
 
