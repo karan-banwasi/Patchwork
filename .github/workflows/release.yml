@@ -6,13 +6,9 @@ on:
       - main
     tags:
       - 'v*'
-    paths-ignore:
-      - '**.md'
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
   workflow_dispatch:
     inputs:
       bump:
@@ -91,6 +87,15 @@ jobs:
           path: coverage.txt
           retention-days: 14
 
+      - name: Run fuzz smoke tests
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go test -run=^$ -fuzz=FuzzCompare -fuzztime=3s ./internal/version
+          go test -run=^$ -fuzz=FuzzEvaluateConstraint -fuzztime=3s ./internal/version
+          go test -run=^$ -fuzz=FuzzValidateIDs -fuzztime=3s ./internal/pm
+          go test -run=^$ -fuzz=FuzzParsePatchfile -fuzztime=3s ./internal/profile
+          go test -run=^$ -fuzz=FuzzParseWingetOutput -fuzztime=3s ./internal/winget
+
       - name: Run govulncheck
         if: matrix.os == 'ubuntu-latest'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
@@ -137,6 +142,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      pull-requests: write
     env:
       WINGET_PUBLISH: ${{ vars.WINGET_PUBLISH || vars.WINGET_ENABLED || vars.ENABLE_WINGET_PUBLISH }}
       BUMP_TYPE: ${{ github.event.inputs.bump || 'patch' }}
@@ -370,7 +376,19 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/pw.rb bucket/pw.json winget/KaranBanwasi.Patchwork.yaml winget/KaranBanwasi.Patchwork.locale.en-US.yaml winget/KaranBanwasi.Patchwork.installer.yaml
           git commit -m "chore(dist): update Formula, Scoop bucket, and Winget manifests for ${NEW_TAG}"
-          git push origin HEAD:main
+          if ! git push origin HEAD:main; then
+            SYNC_BRANCH="chore/sync-manifests-${NEW_TAG}"
+            git push -f origin "HEAD:refs/heads/${SYNC_BRANCH}"
+            gh pr create \
+              --repo "$GH_REPO" \
+              --base main \
+              --head "$SYNC_BRANCH" \
+              --title "chore(dist): update manifests for ${NEW_TAG}" \
+              --body "Automated distribution manifest sync (Formula, Scoop bucket, and Winget templates) for release ${NEW_TAG}." || \
+            gh pr edit "$SYNC_BRANCH" \
+              --repo "$GH_REPO" \
+              --title "chore(dist): update manifests for ${NEW_TAG}"
+          fi
 
       - name: Publish to winget-pkgs
         if: (vars.WINGET_PUBLISH == 'true' || vars.WINGET_ENABLED == 'true' || vars.ENABLE_WINGET_PUBLISH == 'true' || env.WINGET_PUBLISH == 'true')
