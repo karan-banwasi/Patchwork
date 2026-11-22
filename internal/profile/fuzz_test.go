@@ -9,7 +9,7 @@ func FuzzParsePatchfile(f *testing.F) {
 		[]byte(`{"schema_version":"1.0.0","packages":[`),
 		[]byte("pin \"unterminated\n"),
 		[]byte("# comment only\n\n"),
-		[]byte{},
+		{},
 	}
 	for _, s := range seeds {
 		f.Add(s)
