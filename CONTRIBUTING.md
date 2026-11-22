@@ -15,7 +15,7 @@ All contributors and participants in the Patchwork project are expected to adher
 ## Getting Started
 
 ### Prerequisites
-- **Go**: Version `1.22+` (or `1.27.3` matching `go.mod`).
+- **Go**: Version `1.22+` (or `1.27.4` matching `go.mod`).
 - **Git**: Installed and configured.
 - **Operating System**: Windows, macOS, or Linux.
 - **Optional Tools**:
@@ -124,7 +124,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
 ### Golden Parser Fixtures
-When adding or modifying package manager output parsers (`internal/brew`, `internal/winget`, etc.), include or update golden-file fixtures in `tests/fixtures/` or the corresponding test directory to ensure parsing logic remains resilient to CLI output format shifts.
+When adding or modifying package manager output parsers (`internal/brew`, `internal/winget`, etc.), include or update golden-file fixtures in `internal/<manager>/testdata/` (verified by `internal/<manager>/golden_test.go`) to ensure parsing logic remains resilient to CLI output format shifts.
 
 ---
 

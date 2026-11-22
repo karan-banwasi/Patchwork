@@ -24,7 +24,7 @@ To update to the latest supported version, run:
 ```bash
 pw self-update
 ```
-or update via your system package manager (`winget upgrade KaranBanwasi.Patchwork`, `brew upgrade patchwork`, or `scoop update patchwork`).
+or update via your system package manager (`winget upgrade KaranBanwasi.Patchwork`, `brew upgrade pw`, or `scoop update pw`).
 
 ---
 
