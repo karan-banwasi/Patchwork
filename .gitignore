@@ -37,6 +37,8 @@ go.work.sum
 /pw
 /pw-*
 /dist/
+/result
+/result-*
 
 # Winget local generated manifests
 winget/manifests/

@@ -492,20 +492,26 @@ pw self-update --check
 ## Development
 
 ### Development with Nix
-Patchwork supports zero-dependency local developer environments and hermetic builds via [Determinate Nix](https://determinate.systems/) and Nix Flakes.
+Patchwork supports zero-dependency developer environments and hermetic Linux/macOS builds via [Determinate Nix](https://determinate.systems/) and Nix Flakes (including automatic shell completions).
 
-- **Install Nix** (Determinate Nix installer):
+- **Install Determinate Nix**:
   ```bash
   curl -fsSL https://install.determinate.systems/nix | sh -s -- install
   ```
-- **Run the Developer Shell**:
+- **Enter the Developer Shell** (provides Go 1.27.4, `golangci-lint`, `gopls`, `goreleaser`, `govulncheck`, and `jq`; loaded automatically if you use `direnv` with `.envrc`):
   ```bash
   nix develop
   ```
-  *(Equipped with Go, `golangci-lint`, `gopls`, and `goreleaser`. If you use `direnv`, `.envrc` will automatically load this shell).*
-- **Build the Binary**:
+- **Build or Run `pw` Hermetically**:
   ```bash
   nix build
+  ./result/bin/pw version
+  # or run directly without installing:
+  nix run . -- --help
+  ```
+- **Run Flake Checks**:
+  ```bash
+  nix flake check
   ```
 
 ### Code Generation (`go-winres`)

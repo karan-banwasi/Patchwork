@@ -17,25 +17,66 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   nix-ci:
-    name: Determinate Nix CI
-    runs-on: ubuntu-latest
+    name: Determinate Nix CI (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Determinate Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/determinate-nix-action@4b040423529d49b1a19ba918742e0aa9aa95031a # v3.24.3
 
       - name: Setup Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          use-flakehub: false
+          use-gha-cache: true
+
+      - name: Check Flake Inputs
+        uses: DeterminateSystems/flake-checker-action@786422608c7bded2bbc9741ad9f91356842bf520 # v14
+        with:
+          send-statistics: false
+
+      - name: Inspect Flake Metadata
+        run: |
+          nix flake metadata --json
+          rm -f flake.lock
 
       - name: Check Flake
         run: nix flake check
 
+      - name: Build Hermetic Package
+        run: |
+          nix build .#default
+          ./result/bin/pw --help
+          VERSION_OUT=$(./result/bin/pw version)
+          echo "$VERSION_OUT"
+          echo "$VERSION_OUT" | grep -F "v0.3.2"
+          echo "$VERSION_OUT" | grep -F "go1.27.4"
+
+      - name: Verify Nix DevShell Go Version
+        run: nix develop --command go version
+
+      - name: Run Tests in Nix DevShell (Linux with race detector)
+        if: matrix.os == 'ubuntu-latest'
+        run: nix develop --command go test -v -race ./...
+
       - name: Run Tests in Nix DevShell
+        if: matrix.os != 'ubuntu-latest'
         run: nix develop --command go test -v ./...
 
-      - name: Build Hermetic Package
-        run: nix build .#default
+      - name: Run golangci-lint in Nix DevShell
+        if: matrix.os == 'ubuntu-latest'
+        run: nix develop --command golangci-lint run
