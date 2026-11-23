@@ -3,23 +3,30 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/config"
+	"github.com/karan-banwasi/patchwork/internal/httputil"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
+	ver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -29,16 +36,40 @@ const (
 	maxManifestSize    = 1 << 20 // 1 MiB
 	metadataTimeout    = 30 * time.Second
 	binaryDownloadTime = 10 * time.Minute
+
+	channelStable     = "stable"
+	channelPrerelease = "prerelease"
+)
+
+var (
+	selfUpdateAPIBaseURL = defaultGitHubAPI
+	selfUpdateHTTPClient *http.Client
 )
 
 type selfUpdateOptions struct {
 	force              bool
 	skipAttestation    bool
 	requireAttestation bool
+	offline            bool
+	check              bool
+	prerelease         bool
+	channel            string
+	json               bool
+}
+
+type selfUpdateJSONOutput struct {
+	SchemaVersion   string `json:"schema_version"`
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Channel         string `json:"channel"`
+	ReleaseURL      string `json:"release_url"`
+	Updated         *bool  `json:"updated,omitempty"`
 }
 
 type ghRelease struct {
 	TagName    string    `json:"tag_name"`
+	HTMLURL    string    `json:"html_url"`
 	Draft      bool      `json:"draft"`
 	Prerelease bool      `json:"prerelease"`
 	Assets     []ghAsset `json:"assets"`
@@ -56,37 +87,50 @@ type ghAttestationsResponse struct {
 	} `json:"attestations"`
 }
 
-// isNewerVersion compares two semantic version tags (e.g. "v1.0.5" vs "v1.0.4").
-func isNewerVersion(current, latest string) bool {
-	if current == "" || current == "dev" {
-		return true
-	}
-	cParts := parseSemverParts(current)
-	lParts := parseSemverParts(latest)
-	for i := 0; i < 3; i++ {
-		if lParts[i] > cParts[i] {
-			return true
-		}
-		if lParts[i] < cParts[i] {
-			return false
-		}
-	}
-	return false
+type sigstoreBundle struct {
+	MediaType            string                 `json:"mediaType"`
+	VerificationMaterial *bundleVerificationMat `json:"verificationMaterial"`
+	DSSEEnvelope         *dsseEnvelope          `json:"dsseEnvelope"`
 }
 
-func parseSemverParts(v string) [3]int {
-	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
-	if idx := strings.IndexAny(v, "-+"); idx != -1 {
-		v = v[:idx]
-	}
-	parts := strings.Split(v, ".")
-	var res [3]int
-	for i := 0; i < len(parts) && i < 3; i++ {
-		if n, err := strconv.Atoi(parts[i]); err == nil {
-			res[i] = n
-		}
-	}
-	return res
+type bundleVerificationMat struct {
+	Certificate          *bundleCert      `json:"certificate"`
+	X509CertificateChain *bundleCertChain `json:"x509CertificateChain"`
+}
+
+type bundleCert struct {
+	RawBytes string `json:"rawBytes"`
+}
+
+type bundleCertChain struct {
+	Certificates []bundleCert `json:"certificates"`
+}
+
+type dsseEnvelope struct {
+	Payload     string          `json:"payload"`
+	PayloadType string          `json:"payloadType"`
+	Signatures  []dsseSignature `json:"signatures"`
+}
+
+type dsseSignature struct {
+	KeyID string `json:"keyid"`
+	Sig   string `json:"sig"`
+}
+
+type inTotoStatement struct {
+	Type          string          `json:"_type"`
+	Subject       []inTotoSubject `json:"subject"`
+	PredicateType string          `json:"predicateType"`
+}
+
+type inTotoSubject struct {
+	Name   string            `json:"name"`
+	Digest map[string]string `json:"digest"`
+}
+
+// isNewerVersion compares two semantic version tags (e.g. "v1.0.5" vs "v1.0.4").
+func isNewerVersion(current, latest string) bool {
+	return ver.IsUpgrade("selfupdate", current, latest)
 }
 
 // extractExpectedSHA256 parses KaranBanwasi.Patchwork.installer.yaml content and returns
@@ -116,17 +160,127 @@ func detectManagedInstall(exePath string) error {
 	normalized := strings.ReplaceAll(strings.ToLower(exePath), "/", `\`)
 	switch {
 	case strings.Contains(normalized, `\microsoft\winget\packages\`) || strings.Contains(normalized, `\microsoft\winget\links\`):
-		return fmt.Errorf("Patchwork was installed with winget; run: winget upgrade KaranBanwasi.Patchwork (or pass --force to override)")
+		return fmt.Errorf("patchwork was installed with winget; run: winget upgrade KaranBanwasi.Patchwork (or pass --force to override)")
 	case strings.Contains(normalized, `\scoop\apps\`) || strings.Contains(normalized, `\scoop\shims\`):
-		return fmt.Errorf("Patchwork was installed with Scoop; run: scoop update patchwork (or pass --force to override)")
+		return fmt.Errorf("patchwork was installed with Scoop; run: scoop update pw (or pass --force to override)")
+	case strings.Contains(strings.ToLower(exePath), "/cellar/patchwork/") || strings.Contains(strings.ToLower(exePath), "/opt/homebrew/") || strings.Contains(strings.ToLower(exePath), "/home/linuxbrew/") || strings.Contains(strings.ToLower(exePath), "/.linuxbrew/"):
+		return fmt.Errorf("patchwork was installed with Homebrew; run: brew upgrade pw (or pass --force to override)")
 	}
 	return nil
+}
+
+// resolveBinaryAsset maps GOOS and GOARCH to the expected release binary asset name.
+func resolveBinaryAsset(goos, goarch string) (string, error) {
+	switch goos {
+	case "windows":
+		switch goarch {
+		case "amd64":
+			return "pw.exe", nil
+		case "arm64":
+			return "pw-arm64.exe", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for windows: %s", goarch)
+		}
+	case "darwin":
+		switch goarch {
+		case "arm64":
+			return "pw-darwin-arm64", nil
+		case "amd64":
+			return "pw-darwin-amd64", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for darwin: %s", goarch)
+		}
+	case "linux":
+		switch goarch {
+		case "amd64":
+			return "pw-linux-amd64", nil
+		case "arm64":
+			return "pw-linux-arm64", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture for linux: %s", goarch)
+		}
+	default:
+		return "", fmt.Errorf("unsupported operating system: %s", goos)
+	}
+}
+
+// parseSHA256Sums parses standard SHA256SUMS content (lines of "<hash> [*]<filename>")
+// and returns a map of filename to uppercase hex SHA256.
+func parseSHA256Sums(content string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		hash := fields[0]
+		if len(hash) != 64 {
+			continue
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(hash):])
+		rest = strings.TrimPrefix(rest, "*")
+		rest = strings.TrimSpace(rest)
+		rest = strings.TrimPrefix(rest, "./")
+		rest = strings.TrimPrefix(rest, `.\`)
+		rest = strings.ReplaceAll(rest, `\`, "/")
+		var filename string
+		if idx := strings.LastIndex(rest, "/"); idx != -1 {
+			filename = rest[idx+1:]
+		} else {
+			filename = rest
+		}
+		if filename != "" {
+			result[filename] = strings.ToUpper(hash)
+		}
+	}
+	return result
+}
+
+// downloadAssetBytes downloads small metadata or manifest assets (limited to maxManifestSize).
+func downloadAssetBytes(ctx context.Context, client *http.Client, asset *ghAsset, token string) ([]byte, error) {
+	manCtx, manCancel := context.WithTimeout(ctx, metadataTimeout)
+	defer manCancel()
+
+	req, err := http.NewRequestWithContext(manCtx, http.MethodGet, asset.BrowserDownloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build asset request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Patchwork-CLI")
+	if token != "" && asset.URL != "" {
+		req.URL, _ = req.URL.Parse(asset.URL)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/octet-stream")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download asset: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("asset download returned status %d", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read asset: %w", err)
+	}
+	return bodyBytes, nil
 }
 
 // cleanupStaleUpdateFiles removes leftover temporary binaries from interrupted self-updates.
 func cleanupStaleUpdateFiles(exeDir, exePath string) {
 	_ = os.Remove(exePath + ".old")
-	matches, err := filepath.Glob(filepath.Join(exeDir, "pw-update-*.exe"))
+	matches, err := filepath.Glob(filepath.Join(exeDir, "pw-update-*"))
 	if err != nil {
 		return
 	}
@@ -135,15 +289,139 @@ func cleanupStaleUpdateFiles(exeDir, exePath string) {
 	}
 }
 
+func verifyAttestationBundle(bundleRaw []byte, repo, pinnedWorkflow, actualSHA string) error {
+	var bundle sigstoreBundle
+	if err := json.Unmarshal(bundleRaw, &bundle); err != nil {
+		return fmt.Errorf("failed to parse sigstore bundle: %w", err)
+	}
+
+	var certBytes []byte
+	if bundle.VerificationMaterial != nil {
+		if bundle.VerificationMaterial.Certificate != nil && bundle.VerificationMaterial.Certificate.RawBytes != "" {
+			b, err := base64.StdEncoding.DecodeString(bundle.VerificationMaterial.Certificate.RawBytes)
+			if err == nil {
+				certBytes = b
+			}
+		} else if bundle.VerificationMaterial.X509CertificateChain != nil && len(bundle.VerificationMaterial.X509CertificateChain.Certificates) > 0 {
+			b, err := base64.StdEncoding.DecodeString(bundle.VerificationMaterial.X509CertificateChain.Certificates[0].RawBytes)
+			if err == nil {
+				certBytes = b
+			}
+		}
+	}
+	if len(certBytes) == 0 {
+		return errors.New("missing certificate in attestation verification material")
+	}
+
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Verify signer workflow identity strictly in certificate Subject Alternative Name (SAN) URIs.
+	// In Sigstore Fulcio certificates for GitHub Actions provenance, the SAN URI format is:
+	// https://github.com/<owner>/<repo>/<workflow_path>@<ref>
+	// We strictly anchor the scheme, host, and workflow path before any '@' ref delimiter.
+	cleanedPinnedWorkflow := strings.Trim(pinnedWorkflow, "/")
+	expectedURI := "https://github.com/" + cleanedPinnedWorkflow
+	expectedPath := "/" + cleanedPinnedWorkflow
+
+	workflowMatched := false
+	for _, u := range cert.URIs {
+		if u == nil {
+			continue
+		}
+		if u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") {
+			continue
+		}
+		if u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+			continue
+		}
+
+		raw := u.String()
+		if idx := strings.Index(raw, "@"); idx != -1 {
+			if idx == len(raw)-1 {
+				continue
+			}
+			raw = raw[:idx]
+		}
+
+		path := u.Path
+		if idx := strings.Index(path, "@"); idx != -1 {
+			path = path[:idx]
+		}
+
+		if raw == expectedURI && path == expectedPath {
+			workflowMatched = true
+			break
+		}
+	}
+	if !workflowMatched {
+		return fmt.Errorf("signing certificate does not match expected signer workflow %q", pinnedWorkflow)
+	}
+
+	pubKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("unsupported public key type in certificate: %T", cert.PublicKey)
+	}
+
+	if bundle.DSSEEnvelope == nil || len(bundle.DSSEEnvelope.Signatures) == 0 {
+		return errors.New("missing DSSE envelope or signatures in bundle")
+	}
+
+	payloadBytes, err := base64.StdEncoding.DecodeString(bundle.DSSEEnvelope.Payload)
+	if err != nil {
+		return fmt.Errorf("failed to decode DSSE payload: %w", err)
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(bundle.DSSEEnvelope.Signatures[0].Sig)
+	if err != nil {
+		return fmt.Errorf("failed to decode DSSE signature: %w", err)
+	}
+
+	pae := []byte(fmt.Sprintf("DSSEv1 %d %s %d ", len(bundle.DSSEEnvelope.PayloadType), bundle.DSSEEnvelope.PayloadType, len(payloadBytes)))
+	pae = append(pae, payloadBytes...)
+	paeHash := sha256.Sum256(pae)
+
+	verifiedSig := ecdsa.VerifyASN1(pubKey, paeHash[:], sigBytes)
+	if !verifiedSig && len(sigBytes) == 64 {
+		r := new(big.Int).SetBytes(sigBytes[:32])
+		s := new(big.Int).SetBytes(sigBytes[32:])
+		verifiedSig = ecdsa.Verify(pubKey, paeHash[:], r, s)
+	}
+	if !verifiedSig {
+		return errors.New("cryptographic signature verification failed")
+	}
+
+	var stmt inTotoStatement
+	if err := json.Unmarshal(payloadBytes, &stmt); err != nil {
+		return fmt.Errorf("failed to parse in-toto statement: %w", err)
+	}
+
+	digestMatched := false
+	for _, subj := range stmt.Subject {
+		if strings.EqualFold(subj.Digest["sha256"], actualSHA) {
+			digestMatched = true
+			break
+		}
+	}
+	if !digestMatched {
+		return fmt.Errorf("attestation statement subject digests do not match binary sha256 %s", actualSHA)
+	}
+
+	return nil
+}
+
 // verifyAttestationGate verifies build provenance of the downloaded binary.
 // Verification fails closed: any mismatch or missing attestation blocks the update unless skipped explicitly.
 func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL, repo, filePath, actualSHA string, token string) error {
+	pinnedWorkflow := fmt.Sprintf("%s/.github/workflows/release.yml", repo)
+
 	if apiBaseURL == defaultGitHubAPI {
 		if ghExe, err := exec.LookPath("gh"); err == nil {
 			attCtx, attCancel := context.WithTimeout(ctx, metadataTimeout)
 			defer attCancel()
 			var outBuf bytes.Buffer
-			attCmd := exec.CommandContext(attCtx, ghExe, "attestation", "verify", filePath, "--repo", repo)
+			attCmd := exec.CommandContext(attCtx, ghExe, "attestation", "verify", filePath, "--repo", repo, "--signer-workflow", pinnedWorkflow)
 			attCmd.Stdout = &outBuf
 			attCmd.Stderr = &outBuf
 			if err := attCmd.Run(); err != nil {
@@ -187,40 +465,89 @@ func verifyAttestationGate(ctx context.Context, client *http.Client, apiBaseURL,
 	if len(attResp.Attestations) == 0 {
 		return fmt.Errorf("zero attestations found for digest %s; refusing to update without authentic provenance", actualSHA)
 	}
+
+	var lastErr error
+	verified := false
+	for i, att := range attResp.Attestations {
+		if len(att.Bundle) == 0 {
+			lastErr = fmt.Errorf("attestation bundle [%d] is empty", i)
+			continue
+		}
+		if err := verifyAttestationBundle(att.Bundle, repo, pinnedWorkflow, actualSHA); err != nil {
+			lastErr = err
+			continue
+		}
+		verified = true
+		break
+	}
+
+	if !verified {
+		if lastErr != nil {
+			return fmt.Errorf("cryptographic verification of build provenance attestation failed: %w", lastErr)
+		}
+		return fmt.Errorf("zero valid cryptographic attestations found for digest %s", actualSHA)
+	}
+
 	return nil
 }
 
-func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
-	if !opts.force {
-		if err := detectManagedInstall(exePath); err != nil {
-			return err
+func githubTokenFromEnv() string {
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		return token
+	}
+	return os.Getenv("GITHUB_TOKEN")
+}
+
+func normalizeChannel(ch string) (string, error) {
+	norm := strings.ToLower(strings.TrimSpace(ch))
+	if norm == "" {
+		return "", nil
+	}
+	if norm != channelStable && norm != channelPrerelease {
+		return "", fmt.Errorf("invalid channel %q: must be %q or %q", ch, channelStable, channelPrerelease)
+	}
+	return norm, nil
+}
+
+func resolveChannel(flagChannel string, prerelease bool, cfg *config.Config) (string, error) {
+	if flagChannel != "" {
+		if _, err := normalizeChannel(flagChannel); err != nil {
+			return "", err
 		}
 	}
-
-	exeDir := filepath.Dir(exePath)
-	cleanupStaleUpdateFiles(exeDir, exePath)
-
-	fmt.Fprintf(out, "Checking for Patchwork updates (current: %s)...\n", currentVersion)
-
-	assetName := "pw.exe"
-	wingetArch := "x64"
-	if goarch == "arm64" {
-		assetName = "pw-arm64.exe"
-		wingetArch = "arm64"
+	if prerelease {
+		return channelPrerelease, nil
 	}
-
-	token := os.Getenv("GH_TOKEN")
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+	if flagChannel != "" {
+		return normalizeChannel(flagChannel)
 	}
+	if cfg != nil && cfg.Defaults.Channel != "" {
+		ch, err := normalizeChannel(cfg.Defaults.Channel)
+		if err != nil {
+			return "", err
+		}
+		if ch != "" {
+			return ch, nil
+		}
+	}
+	return channelStable, nil
+}
 
+func fetchTargetRelease(ctx context.Context, client *http.Client, apiBaseURL, channel, token string) (*ghRelease, error) {
 	metaCtx, metaCancel := context.WithTimeout(ctx, metadataTimeout)
 	defer metaCancel()
 
-	apiURL := fmt.Sprintf("%s/repos/%s/releases/latest", strings.TrimRight(apiBaseURL, "/"), githubRepo)
+	base := strings.TrimRight(apiBaseURL, "/")
+	var apiURL string
+	if channel == channelPrerelease {
+		apiURL = fmt.Sprintf("%s/repos/%s/releases?per_page=10", base, githubRepo)
+	} else {
+		apiURL = fmt.Sprintf("%s/repos/%s/releases/latest", base, githubRepo)
+	}
+
 	req, err := http.NewRequestWithContext(metaCtx, http.MethodGet, apiURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Patchwork-CLI")
 	if token != "" {
@@ -229,84 +556,199 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to query GitHub releases: %w", err)
+		return nil, fmt.Errorf("failed to query GitHub releases: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	if channel == channelPrerelease {
+		var releases []ghRelease
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize)).Decode(&releases); err != nil {
+			return nil, fmt.Errorf("failed to decode release info: %w", err)
+		}
+		var best *ghRelease
+		for i := range releases {
+			r := &releases[i]
+			if r.Draft || r.TagName == "" {
+				continue
+			}
+			if best == nil || isNewerVersion(best.TagName, r.TagName) {
+				best = r
+			}
+		}
+		if best == nil {
+			return nil, fmt.Errorf("no eligible releases found")
+		}
+		return best, nil
 	}
 
 	var rel ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize)).Decode(&rel); err != nil {
-		return fmt.Errorf("failed to decode release info: %w", err)
+		return nil, fmt.Errorf("failed to decode release info: %w", err)
 	}
-
 	if rel.TagName == "" {
-		return fmt.Errorf("no release tag found")
+		return nil, fmt.Errorf("no release tag found")
 	}
 	if rel.Draft || rel.Prerelease {
-		return fmt.Errorf("release %s is a draft or prerelease; refusing to update", rel.TagName)
+		return nil, fmt.Errorf("release %s is a draft or prerelease; refusing to update", rel.TagName)
+	}
+	return &rel, nil
+}
+
+func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, currentVersion, goos, goarch, exePath string, opts selfUpdateOptions, out io.Writer) error {
+	if opts.skipAttestation && opts.requireAttestation {
+		return fmt.Errorf("cannot specify both --skip-attestation and --require-attestation")
 	}
 
-	if !isNewerVersion(currentVersion, rel.TagName) {
+	channel, err := resolveChannel(opts.channel, opts.prerelease, nil)
+	if err != nil {
+		return err
+	}
+
+	var exeDir string
+	var assetName string
+	if !opts.check {
+		if !opts.force {
+			if err := detectManagedInstall(exePath); err != nil {
+				return err
+			}
+		}
+
+		exeDir = filepath.Dir(exePath)
+		cleanupStaleUpdateFiles(exeDir, exePath)
+
+		assetName, err = resolveBinaryAsset(goos, goarch)
+		if err != nil {
+			return err
+		}
+	}
+
+	if !opts.json {
+		fmt.Fprintf(out, "Checking for Patchwork updates (current: %s)...\n", currentVersion)
+	}
+
+	token := githubTokenFromEnv()
+	rel, err := fetchTargetRelease(ctx, client, apiBaseURL, channel, token)
+	if err != nil {
+		return err
+	}
+
+	updateAvailable := isNewerVersion(currentVersion, rel.TagName)
+
+	if opts.check {
+		if opts.json {
+			return encodeIndentedJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   upgrade.CurrentSchemaVersion,
+				CurrentVersion:  currentVersion,
+				LatestVersion:   rel.TagName,
+				UpdateAvailable: updateAvailable,
+				Channel:         channel,
+				ReleaseURL:      rel.HTMLURL,
+			})
+		}
+		if updateAvailable {
+			fmt.Fprintf(out, "A new version of Patchwork is available: %s -> %s (channel: %s)\n", currentVersion, rel.TagName, channel)
+			if rel.HTMLURL != "" {
+				fmt.Fprintf(out, "Release URL: %s\n", rel.HTMLURL)
+			}
+		} else {
+			fmt.Fprintf(out, "Patchwork is already up to date (%s).\n", currentVersion)
+		}
+		return nil
+	}
+
+	if !updateAvailable {
+		if opts.json {
+			updated := false
+			return encodeIndentedJSON(out, selfUpdateJSONOutput{
+				SchemaVersion:   upgrade.CurrentSchemaVersion,
+				CurrentVersion:  currentVersion,
+				LatestVersion:   rel.TagName,
+				UpdateAvailable: false,
+				Channel:         channel,
+				ReleaseURL:      rel.HTMLURL,
+				Updated:         &updated,
+			})
+		}
 		fmt.Fprintf(out, "Patchwork is already up to date (%s).\n", currentVersion)
 		return nil
 	}
 
 	var targetAsset *ghAsset
-	var manifestAsset *ghAsset
+	var sha256SumsAsset *ghAsset
+	var wingetYamlAsset *ghAsset
+
 	for i := range rel.Assets {
-		if rel.Assets[i].Name == assetName {
+		switch rel.Assets[i].Name {
+		case assetName:
 			targetAsset = &rel.Assets[i]
-		}
-		if rel.Assets[i].Name == "KaranBanwasi.Patchwork.installer.yaml" {
-			manifestAsset = &rel.Assets[i]
+		case "SHA256SUMS":
+			sha256SumsAsset = &rel.Assets[i]
+		case "KaranBanwasi.Patchwork.installer.yaml":
+			wingetYamlAsset = &rel.Assets[i]
 		}
 	}
+
+	// Compatibility fallback for Windows asset names
+	if targetAsset == nil && goos == "windows" {
+		altName := ""
+		if goarch == "amd64" {
+			altName = "pw-windows-amd64.exe"
+		} else if goarch == "arm64" {
+			altName = "pw-windows-arm64.exe"
+		}
+		if altName != "" {
+			for i := range rel.Assets {
+				if rel.Assets[i].Name == altName {
+					targetAsset = &rel.Assets[i]
+					assetName = altName
+					break
+				}
+			}
+		}
+	}
+
 	if targetAsset == nil {
 		return fmt.Errorf("release %s does not contain asset %q", rel.TagName, assetName)
 	}
-	if manifestAsset == nil {
-		return fmt.Errorf("release %s has no checksum manifest; refusing to update", rel.TagName)
+
+	var expectedSHA string
+	if sha256SumsAsset != nil {
+		bodyBytes, err := downloadAssetBytes(ctx, client, sha256SumsAsset, token)
+		if err != nil {
+			return fmt.Errorf("failed to download checksum manifest (SHA256SUMS): %w", err)
+		}
+		sums := parseSHA256Sums(string(bodyBytes))
+		expectedSHA = sums[assetName]
+		if expectedSHA == "" {
+			return fmt.Errorf("release %s SHA256SUMS does not contain checksum for %s; refusing to update", rel.TagName, assetName)
+		}
+	} else if goos == "windows" && wingetYamlAsset != nil {
+		bodyBytes, err := downloadAssetBytes(ctx, client, wingetYamlAsset, token)
+		if err != nil {
+			return fmt.Errorf("failed to download checksum manifest: %w", err)
+		}
+		wingetArch := "x64"
+		if goarch == "arm64" {
+			wingetArch = "arm64"
+		}
+		expectedSHA = extractExpectedSHA256(string(bodyBytes), wingetArch)
+		if expectedSHA == "" {
+			return fmt.Errorf("could not determine expected SHA256 for %s; refusing to update", assetName)
+		}
+	} else {
+		if goos == "windows" {
+			return fmt.Errorf("release %s has no checksum manifest (neither SHA256SUMS nor winget installer yaml); refusing to update", rel.TagName)
+		}
+		return fmt.Errorf("release %s has no SHA256SUMS checksum manifest; refusing to update", rel.TagName)
 	}
 
-	// Fetch installer manifest to verify SHA-256 checksum (fail closed)
-	manCtx, manCancel := context.WithTimeout(ctx, metadataTimeout)
-	defer manCancel()
-
-	reqMan, err := http.NewRequestWithContext(manCtx, http.MethodGet, manifestAsset.BrowserDownloadURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to build manifest request: %w", err)
+	if !opts.json {
+		fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
 	}
-	reqMan.Header.Set("User-Agent", "Patchwork-CLI")
-	if token != "" && manifestAsset.URL != "" {
-		reqMan.URL, _ = reqMan.URL.Parse(manifestAsset.URL)
-		reqMan.Header.Set("Authorization", "Bearer "+token)
-		reqMan.Header.Set("Accept", "application/octet-stream")
-	}
-
-	respMan, err := client.Do(reqMan)
-	if err != nil {
-		return fmt.Errorf("failed to download checksum manifest: %w", err)
-	}
-	defer respMan.Body.Close()
-
-	if respMan.StatusCode != http.StatusOK {
-		return fmt.Errorf("checksum manifest download returned status %d", respMan.StatusCode)
-	}
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(respMan.Body, maxManifestSize))
-	if err != nil {
-		return fmt.Errorf("failed to read checksum manifest: %w", err)
-	}
-
-	expectedSHA := extractExpectedSHA256(string(bodyBytes), wingetArch)
-	if expectedSHA == "" {
-		return fmt.Errorf("could not determine expected SHA256 for %s; refusing to update", assetName)
-	}
-
-	fmt.Fprintf(out, "Downloading Patchwork %s (%s)...\n", rel.TagName, assetName)
 
 	dlCtx, dlCancel := context.WithTimeout(ctx, binaryDownloadTime)
 	defer dlCancel()
@@ -333,7 +775,12 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		return fmt.Errorf("asset download returned status %d", respDL.StatusCode)
 	}
 
-	tmpFile, err := os.CreateTemp(exeDir, "pw-update-*.exe")
+	tempPattern := "pw-update-*"
+	if goos == "windows" {
+		tempPattern = "pw-update-*.exe"
+	}
+
+	tmpFile, err := os.CreateTemp(exeDir, tempPattern)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) || os.IsPermission(err) {
 			return fmt.Errorf("cannot write to %s: installed in a protected location; rerun elevated or use the package manager that installed it", exeDir)
@@ -355,7 +802,9 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("SHA256 checksum mismatch for %s: expected %s, got %s", assetName, expectedSHA, actualSHA)
 	}
-	fmt.Fprintf(out, "Verified SHA256 checksum (%s).\n", actualSHA[:12])
+	if !opts.json {
+		fmt.Fprintf(out, "Verified SHA256 checksum (%s).\n", actualSHA[:12])
+	}
 
 	// Attestation verification gate: fail closed if attestation fails or is required and missing
 	if !opts.skipAttestation {
@@ -363,12 +812,14 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 			_ = os.Remove(tmpPath)
 			return fmt.Errorf("provenance attestation verification gate failed: %w", err)
 		}
-		fmt.Fprintln(out, "Verified GitHub build provenance attestation.")
-	} else {
+		if !opts.json {
+			fmt.Fprintln(out, "Verified GitHub build provenance attestation.")
+		}
+	} else if !opts.json {
 		fmt.Fprintln(out, "Warning: Skipping build provenance attestation verification (--skip-attestation).")
 	}
 
-	_ = os.Chmod(tmpPath, 0755)
+	_ = os.Chmod(tmpPath, 0755) //nolint:gosec // G302: self-updated binary must be executable
 
 	oldPath := exePath + ".old"
 	_ = os.Remove(oldPath)
@@ -391,6 +842,19 @@ func performSelfUpdate(ctx context.Context, client *http.Client, apiBaseURL, cur
 	// Best-effort cleanup of .old binary (on Windows this may remain until next update)
 	_ = os.Remove(oldPath)
 
+	if opts.json {
+		updated := true
+		return encodeIndentedJSON(out, selfUpdateJSONOutput{
+			SchemaVersion:   upgrade.CurrentSchemaVersion,
+			CurrentVersion:  currentVersion,
+			LatestVersion:   rel.TagName,
+			UpdateAvailable: true,
+			Channel:         channel,
+			ReleaseURL:      rel.HTMLURL,
+			Updated:         &updated,
+		})
+	}
+
 	fmt.Fprintf(out, "Successfully updated Patchwork to %s!\n", rel.TagName)
 	return nil
 }
@@ -405,20 +869,39 @@ func newSelfUpdateCmd() *cobra.Command {
 		Long:    `Check GitHub Releases for a newer version of Patchwork and update the executable in-place.`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exePath, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("failed to determine current executable path: %w", err)
-			}
-			exePath, err = filepath.EvalSymlinks(exePath)
-			if err != nil {
-				return fmt.Errorf("failed to resolve executable symlink: %w", err)
+			if opts.offline || isEnvTruthy("PATCHWORK_OFFLINE") {
+				return errors.New("self-update requires network access and cannot run in --offline mode")
 			}
 
+			cfg, _ := config.Load()
+			resolvedChannel, err := resolveChannel(opts.channel, opts.prerelease, cfg)
+			if err != nil {
+				return err
+			}
+			opts.channel = resolvedChannel
+
+			var exePath string
+			if !opts.check {
+				exePath, err = os.Executable()
+				if err != nil {
+					return fmt.Errorf("failed to determine current executable path: %w", err)
+				}
+				exePath, err = filepath.EvalSymlinks(exePath)
+				if err != nil {
+					return fmt.Errorf("failed to resolve executable symlink: %w", err)
+				}
+			}
+
+			client := selfUpdateHTTPClient
+			if client == nil {
+				client = httputil.NewClient(httputil.WithTimeout(metadataTimeout))
+			}
 			return performSelfUpdate(
 				cmd.Context(),
-				http.DefaultClient,
-				defaultGitHubAPI,
+				client,
+				selfUpdateAPIBaseURL,
 				version,
+				runtime.GOOS,
 				runtime.GOARCH,
 				exePath,
 				opts,
@@ -430,6 +913,11 @@ func newSelfUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, "Force self-update even if installed via Winget or Scoop")
 	cmd.Flags().BoolVar(&opts.skipAttestation, "skip-attestation", false, "Skip build provenance attestation verification")
 	cmd.Flags().BoolVar(&opts.requireAttestation, "require-attestation", false, "Require build provenance attestation even in offline/custom environments")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access")
+	cmd.Flags().BoolVar(&opts.check, "check", false, "Check for a newer version without downloading or replacing the binary")
+	cmd.Flags().BoolVar(&opts.prerelease, "prerelease", false, "Include prerelease versions (shorthand for --channel prerelease)")
+	cmd.Flags().StringVar(&opts.channel, "channel", "", "Release channel to check or update from (stable or prerelease)")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output self-update status in JSON format")
 
 	return cmd
 }

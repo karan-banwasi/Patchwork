@@ -1,0 +1,36 @@
+{
+  "formulae": [
+    {
+      "name": "wget",
+      "installed_versions": ["1.21.3"],
+      "current_version": "1.21.4",
+      "pinned": false,
+      "pinned_version": null
+    },
+    {
+      "name": "node@20",
+      "installed_versions": ["20.10.0"],
+      "current_version": "20.11.0",
+      "pinned": false,
+      "pinned_version": null
+    }
+  ],
+  "casks": [
+    {
+      "token": "google-chrome",
+      "name": ["Google Chrome"],
+      "installed_versions": ["122.0.6261.112"],
+      "current_version": "123.0.6312.58",
+      "pinned": false,
+      "pinned_version": null
+    },
+    {
+      "token": "visual-studio-code",
+      "name": "Visual Studio Code",
+      "installed_versions": ["1.85.0"],
+      "current_version": "1.86.0",
+      "pinned": false,
+      "pinned_version": null
+    }
+  ]
+}

@@ -11,6 +11,14 @@ import (
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
+)
+
+var (
+	_ pm.Manager        = (*NpmManager)(nil)
+	_ pm.Locator        = (*NpmManager)(nil)
+	_ pm.Cleaner        = (*NpmManager)(nil)
+	_ pm.IOConfigurable = (*NpmManager)(nil)
 )
 
 // NpmManager implements the pm.Manager interface for global npm packages.
@@ -105,7 +113,7 @@ type npmOutdatedEntry struct {
 }
 
 func (n *NpmManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	exe, err := npmPath()
+	exe, err := n.resolveExe()
 	if err != nil {
 		return nil, err
 	}
@@ -117,8 +125,15 @@ func (n *NpmManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdat
 
 	var stdout, stderr bytes.Buffer
 	// npm outdated exits with code 1 when outdated packages exist
-	_ = runner.Run(ctx, exe, []string{"outdated", "-g", "--json"}, nil, &stdout, &stderr)
+	runErr := runner.Run(ctx, exe, []string{"outdated", "-g", "--json"}, nil, &stdout, &stderr)
 	outputStr := strings.TrimSpace(stdout.String())
+	if runErr != nil && outputStr == "" {
+		stderrStr := strings.TrimSpace(stderr.String())
+		if stderrStr != "" {
+			return nil, fmt.Errorf("npm outdated failed: %w (%s)", runErr, stderrStr)
+		}
+		return nil, fmt.Errorf("npm outdated failed: %w", runErr)
+	}
 	if outputStr == "" || outputStr == "{}" {
 		return []pm.PackageUpdate{}, nil
 	}
@@ -127,12 +142,17 @@ func (n *NpmManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdat
 }
 
 func parseNpmOutdatedJSON(output string) ([]pm.PackageUpdate, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(output), &raw); err != nil {
-		return nil, nil
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || trimmed == "{}" {
+		return []pm.PackageUpdate{}, nil
 	}
-	if _, isErr := raw["error"]; isErr {
-		return nil, nil
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse npm outdated JSON: %w", err)
+	}
+	if errMsg, isErr := raw["error"]; isErr {
+		return nil, fmt.Errorf("npm outdated returned error: %s", strings.TrimSpace(string(errMsg)))
 	}
 
 	var updates []pm.PackageUpdate
@@ -148,7 +168,7 @@ func parseNpmOutdatedJSON(output string) ([]pm.PackageUpdate, error) {
 		if avail == "" {
 			avail = entry.Wanted
 		}
-		if entry.Current != "" && avail != "" && entry.Current != avail {
+		if entry.Current != "" && avail != "" && version.IsUpgrade("npm", entry.Current, avail) {
 			updates = append(updates, pm.PackageUpdate{
 				Name:             pkgName,
 				Id:               pkgName,
@@ -161,7 +181,7 @@ func parseNpmOutdatedJSON(output string) ([]pm.PackageUpdate, error) {
 	}
 
 	sort.Slice(updates, func(i, j int) bool {
-		return updates[i].Name < updates[j].Name
+		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
 	return updates, nil
 }
@@ -170,7 +190,7 @@ func (n *NpmManager) UpgradePackage(ctx context.Context, id string) error {
 	if err := n.ValidateID(id); err != nil {
 		return err
 	}
-	exe, err := npmPath()
+	exe, err := n.resolveExe()
 	if err != nil {
 		return err
 	}

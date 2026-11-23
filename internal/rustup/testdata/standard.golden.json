@@ -1,0 +1,10 @@
+[
+  {
+    "name": "stable-x86_64-unknown-linux-gnu",
+    "id": "stable-x86_64-unknown-linux-gnu",
+    "version": "1.74.0",
+    "available_version": "1.74.1",
+    "source": "rustup",
+    "manager": "rustup"
+  }
+]

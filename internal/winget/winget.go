@@ -9,10 +9,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/karan-banwasi/patchwork/internal/pm"
+)
+
+var (
+	_ pm.Manager             = (*WingetManager)(nil)
+	_ pm.Locator             = (*WingetManager)(nil)
+	_ pm.Deferrer            = (*WingetManager)(nil)
+	_ pm.OptionsConfigurable = (*WingetManager)(nil)
+	_ pm.IOConfigurable      = (*WingetManager)(nil)
 )
 
 // WingetNoApplicableUpgradeExitCode is APPINSTALLER_CLI_ERROR_NO_APPLICABLE_UPGRADE (0x8A15002B / -1978335189).
@@ -61,6 +68,11 @@ func (w *WingetManager) SetIO(stdin io.Reader, stdout, stderr io.Writer) {
 
 func (w *WingetManager) ValidateID(id string) error {
 	return pm.ValidateWingetID(id)
+}
+
+// ConfigureOptions applies runtime upgrade options.
+func (w *WingetManager) ConfigureOptions(opts pm.UpgradeOptions) {
+	w.AcceptAgreements = opts.AcceptAgreements
 }
 
 // ShouldDefer reports whether upgrading id may close or restart the host shell or terminal.
@@ -113,7 +125,7 @@ func isNoApplicableUpgradeExitCode(err error) bool {
 	if !errors.As(err, &exitErr) {
 		return false
 	}
-	code := uint32(exitErr.ExitCode())
+	code := uint32(exitErr.ExitCode()) //nolint:gosec // G115: intentional two's-complement HRESULT mask (0x8A15002B / -1978335189)
 	return code == WingetNoApplicableUpgradeExitCode
 }
 
@@ -163,13 +175,6 @@ func (w *WingetManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUp
 
 	return updates, nil
 }
-
-// GetAvailableUpdates is a package-level helper for convenience.
-func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	return NewWingetManager().GetAvailableUpdates(ctx)
-}
-
-var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
 
 // runeDisplayWidth returns the terminal column width of a rune (2 for full-width CJK runes, 1 otherwise).
 func runeDisplayWidth(r rune) int {
@@ -251,17 +256,24 @@ func sliceByDisplayWidth(runes []rune, startCol, endCol int) string {
 	return string(runes[startIdx:endIdx])
 }
 
-// parseWingetOutput parses the tabular output from winget.
-// Winget outputs variable-spaced columns, so we find the column offsets from the header.
-func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
-	var updates []pm.PackageUpdate
+type wingetTableRow struct {
+	name      string
+	id        string
+	version   string
+	available string
+	source    string
+}
 
-	cleanOutput := ansiEscape.ReplaceAllString(output, "")
+func parseWingetTable(output string, requireAvailable bool) ([]wingetTableRow, error) {
+	var rows []wingetTableRow
+
+	cleanOutput := pm.StripANSI(output)
+	cleanOutput = strings.ReplaceAll(cleanOutput, "\r\n", "\n")
 	lines := strings.Split(cleanOutput, "\n")
 
 	headerLineIdx := -1
 	for i, line := range lines {
-		if strings.Contains(line, "Name") && (strings.Contains(line, "Id") || strings.Contains(line, "ID")) && strings.Contains(line, "Version") && strings.Contains(line, "Available") {
+		if strings.Contains(line, "Name") && (strings.Contains(line, "Id") || strings.Contains(line, "ID")) && strings.Contains(line, "Version") && (!requireAvailable || strings.Contains(line, "Available")) {
 			headerLineIdx = i
 			break
 		}
@@ -281,10 +293,10 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	}
 
 	if headerLineIdx == -1 || headerLineIdx+1 >= len(lines) {
-		return updates, nil
+		return rows, nil
 	}
 
-	headerLine := lines[headerLineIdx]
+	headerLine := strings.TrimRight(lines[headerLineIdx], "\r\n ")
 	if lastCR := strings.LastIndex(headerLine, "\r"); lastCR != -1 {
 		headerLine = headerLine[lastCR+1:]
 	}
@@ -299,27 +311,61 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	availableIdx := indexDisplayWidth(headerRunes, "Available")
 	sourceIdx := indexDisplayWidth(headerRunes, "Source")
 
-	if nameIdx == -1 || idIdx == -1 || versionIdx == -1 || availableIdx == -1 || sourceIdx == -1 {
+	missingCols := nameIdx == -1 || idIdx == -1 || versionIdx == -1
+	if requireAvailable {
+		missingCols = missingCols || availableIdx == -1 || sourceIdx == -1
+	}
+
+	if missingCols {
 		// Use word boundary offsets for localized headers
 		wordIndices := findWordStartDisplayWidths(headerRunes)
-		if len(wordIndices) < 5 {
-			return updates, nil // Could not parse localized headers
+		if requireAvailable {
+			if len(wordIndices) < 5 {
+				return rows, nil
+			}
+			// If a progress spinner character (e.g. "/", "-", "\") precedes the 5 column headers, use the last 5 words
+			offset := 0
+			if len(wordIndices) == 6 && wordIndices[1]-wordIndices[0] <= 3 {
+				offset = 1
+			}
+			nameIdx = wordIndices[offset]
+			idIdx = wordIndices[offset+1]
+			versionIdx = wordIndices[offset+2]
+			availableIdx = wordIndices[offset+3]
+			sourceIdx = wordIndices[offset+4]
+		} else {
+			if len(wordIndices) < 3 {
+				return rows, nil
+			}
+			offset := 0
+			if len(wordIndices) >= 4 && wordIndices[1]-wordIndices[0] <= 3 {
+				offset = 1
+			}
+			if len(wordIndices)-offset < 3 {
+				return rows, nil
+			}
+			nameIdx = wordIndices[offset]
+			idIdx = wordIndices[offset+1]
+			versionIdx = wordIndices[offset+2]
+			if len(wordIndices)-offset >= 5 {
+				availableIdx = wordIndices[offset+3]
+				sourceIdx = wordIndices[offset+4]
+			} else if len(wordIndices)-offset == 4 {
+				sourceIdx = wordIndices[offset+3]
+			}
 		}
-		// If a progress spinner character (e.g. "/", "-", "\") precedes the 5 column headers, use the last 5 words
-		offset := 0
-		if len(wordIndices) == 6 && wordIndices[1]-wordIndices[0] <= 3 {
-			offset = 1
-		}
-		nameIdx = wordIndices[offset]
-		idIdx = wordIndices[offset+1]
-		versionIdx = wordIndices[offset+2]
-		availableIdx = wordIndices[offset+3]
-		sourceIdx = wordIndices[offset+4]
 	}
 
 	// Validate that columns are in the expected order
-	if !(nameIdx >= 0 && idIdx > nameIdx && versionIdx > idIdx && availableIdx > versionIdx && sourceIdx > availableIdx) {
-		return nil, fmt.Errorf("winget header columns are in an unexpected order")
+	validOrder := nameIdx >= 0 && idIdx > nameIdx && versionIdx > idIdx
+	if requireAvailable {
+		validOrder = validOrder && availableIdx > versionIdx && sourceIdx > availableIdx
+	}
+	if !validOrder {
+		if requireAvailable {
+			return nil, fmt.Errorf("winget header columns are in an unexpected order")
+		}
+		return nil, fmt.Errorf("winget list header columns are in an unexpected order")
 	}
 
 	// Winget sometimes outputs its progress spinner or characters on the same line as the headers.
@@ -327,22 +373,35 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 	if nameIdx > 0 {
 		idIdx -= nameIdx
 		versionIdx -= nameIdx
-		availableIdx -= nameIdx
-		sourceIdx -= nameIdx
+		if availableIdx > 0 {
+			availableIdx -= nameIdx
+		}
+		if sourceIdx > 0 {
+			sourceIdx -= nameIdx
+		}
+	}
+
+	verEndIdx := -1
+	if availableIdx > versionIdx {
+		verEndIdx = availableIdx
+	} else if sourceIdx > versionIdx {
+		verEndIdx = sourceIdx
+	}
+
+	minRowWidth := versionIdx
+	if requireAvailable {
+		minRowWidth = availableIdx
 	}
 
 	// The row after headers should be a line of dashes, so we start at +2
 	for i := headerLineIdx + 2; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r\n ")
 		if line == "" {
-			continue // skip empty lines or footer
+			continue
 		}
-
-		// Clean the line from any preceding carriage returns that winget might leave
 		if lastCR := strings.LastIndex(line, "\r"); lastCR != -1 {
 			line = line[lastCR+1:]
 		}
-
 		if strings.HasPrefix(strings.TrimSpace(line), "---") {
 			continue
 		}
@@ -352,40 +411,68 @@ func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
 		for _, r := range runes {
 			totalWidth += runeDisplayWidth(r)
 		}
-
-		// Some footers start with a number or are not package rows. But package rows will have enough length.
-		if totalWidth < availableIdx {
-			continue // skip lines that are too short to be valid rows
+		if totalWidth < minRowWidth {
+			continue
 		}
 
 		name := strings.TrimSpace(sliceByDisplayWidth(runes, 0, idIdx))
 		id := strings.TrimSpace(sliceByDisplayWidth(runes, idIdx, versionIdx))
-		version := strings.TrimSpace(sliceByDisplayWidth(runes, versionIdx, availableIdx))
-		available := ""
-		source := ""
-		if totalWidth > sourceIdx {
-			available = strings.TrimSpace(sliceByDisplayWidth(runes, availableIdx, sourceIdx))
-			source = strings.TrimSpace(sliceByDisplayWidth(runes, sourceIdx, -1))
-		} else {
-			available = strings.TrimSpace(sliceByDisplayWidth(runes, availableIdx, -1))
+		ver := strings.TrimSpace(sliceByDisplayWidth(runes, versionIdx, verEndIdx))
+
+		var avail, src string
+		if requireAvailable {
+			if totalWidth > sourceIdx {
+				avail = strings.TrimSpace(sliceByDisplayWidth(runes, availableIdx, sourceIdx))
+				src = strings.TrimSpace(sliceByDisplayWidth(runes, sourceIdx, -1))
+			} else {
+				avail = strings.TrimSpace(sliceByDisplayWidth(runes, availableIdx, -1))
+			}
 		}
 
-		// Ignore non-package lines that might get caught at the bottom
-		// Winget package IDs do not contain spaces and must be valid winget IDs
 		isRepeatHeader := (strings.EqualFold(name, "Name") && (strings.EqualFold(id, "Id") || strings.EqualFold(id, "ID"))) ||
 			strings.EqualFold(id, "ID")
-		if name != "" && id != "" && !strings.HasPrefix(name, "-") && !strings.Contains(id, " ") &&
-			!strings.EqualFold(version, "Unknown") && !isRepeatHeader && pm.ValidateWingetID(id) == nil {
-			updates = append(updates, pm.PackageUpdate{
-				Name:             name,
-				Id:               id,
-				Version:          version,
-				AvailableVersion: available,
-				Source:           source,
-				ManagerName:      "winget",
-			})
+		if name == "" || id == "" || strings.HasPrefix(name, "-") || strings.Contains(id, " ") || isRepeatHeader {
+			continue
 		}
+		if pm.ValidateWingetID(id) != nil {
+			continue
+		}
+		if strings.EqualFold(ver, "Unknown") {
+			if requireAvailable {
+				continue
+			}
+			ver = ""
+		}
+
+		rows = append(rows, wingetTableRow{
+			name:      name,
+			id:        id,
+			version:   ver,
+			available: avail,
+			source:    src,
+		})
 	}
 
+	return rows, nil
+}
+
+// parseWingetOutput parses the tabular output from winget.
+// Winget outputs variable-spaced columns, so we find the column offsets from the header.
+func parseWingetOutput(output string) ([]pm.PackageUpdate, error) {
+	rows, err := parseWingetTable(output, true)
+	if err != nil {
+		return nil, err
+	}
+	updates := make([]pm.PackageUpdate, 0, len(rows))
+	for _, r := range rows {
+		updates = append(updates, pm.PackageUpdate{
+			Name:             r.name,
+			Id:               r.id,
+			Version:          r.version,
+			AvailableVersion: r.available,
+			Source:           r.source,
+			ManagerName:      "winget",
+		})
+	}
 	return updates, nil
 }

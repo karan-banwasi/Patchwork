@@ -1,0 +1,10 @@
+[
+  {
+    "name": "git.install",
+    "id": "git.install",
+    "version": "2.40.0",
+    "available_version": "2.41.0",
+    "source": "chocolatey",
+    "manager": "choco"
+  }
+]

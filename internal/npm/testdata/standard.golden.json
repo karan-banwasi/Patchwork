@@ -1,0 +1,18 @@
+[
+  {
+    "name": "@angular/cli",
+    "id": "@angular/cli",
+    "version": "17.0.0",
+    "available_version": "18.1.0",
+    "source": "npm",
+    "manager": "npm"
+  },
+  {
+    "name": "typescript",
+    "id": "typescript",
+    "version": "5.4.2",
+    "available_version": "5.5.4",
+    "source": "npm",
+    "manager": "npm"
+  }
+]

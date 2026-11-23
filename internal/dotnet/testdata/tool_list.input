@@ -1,0 +1,4 @@
+Package Id                Version      Commands
+---------------------------------------------------
+dotnet-ef                 8.0.4        dotnet-ef
+csharpier                 0.28.2       dotnet-csharpier

@@ -1,0 +1,3 @@
+stable-x86_64-unknown-linux-gnu - Update available : 1.74.0 -> 1.74.1
+nightly-x86_64-unknown-linux-gnu - Up to date : 1.76.0-nightly (2023-11-20)
+rustup - Up to date : 1.26.0

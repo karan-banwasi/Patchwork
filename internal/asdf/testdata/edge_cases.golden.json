@@ -1,0 +1,18 @@
+[
+  {
+    "name": "nodejs",
+    "id": "nodejs",
+    "version": "20.9.0",
+    "available_version": "",
+    "source": "asdf",
+    "manager": "asdf"
+  },
+  {
+    "name": "python",
+    "id": "python",
+    "version": "3.11.5",
+    "available_version": "",
+    "source": "asdf",
+    "manager": "asdf"
+  }
+]

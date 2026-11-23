@@ -1,0 +1,10 @@
+[
+  {
+    "name": "bundler",
+    "id": "bundler",
+    "version": "2.4.20",
+    "available_version": "2.5.1",
+    "source": "rubygems",
+    "manager": "gem"
+  }
+]

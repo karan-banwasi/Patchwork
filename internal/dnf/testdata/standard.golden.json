@@ -1,0 +1,26 @@
+[
+  {
+    "name": "curl",
+    "id": "curl",
+    "version": "unknown",
+    "available_version": "7.82.0-15.fc38",
+    "source": "updates",
+    "manager": "dnf"
+  },
+  {
+    "name": "git",
+    "id": "git",
+    "version": "unknown",
+    "available_version": "2.40.1-1.fc38",
+    "source": "updates",
+    "manager": "dnf"
+  },
+  {
+    "name": "python3",
+    "id": "python3",
+    "version": "unknown",
+    "available_version": "3.11.4-1.fc38",
+    "source": "updates",
+    "manager": "dnf"
+  }
+]

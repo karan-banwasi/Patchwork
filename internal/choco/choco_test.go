@@ -110,3 +110,84 @@ func TestFormatElevatedArgs_EscapesBackslashesAndQuotes(t *testing.T) {
 		t.Errorf("formatElevatedArgs got %q, want %q", got, want)
 	}
 }
+
+func TestParseChocoOutput_FiltersDowngradeAndIdentical(t *testing.T) {
+	sampleOutput := `Chocolatey v2.7.5
+chocolatey|2.7.5|2.7.5|false
+vcredist140|14.51.36247|14.50.0|false
+git.install|2.40.0|2.41.0|false`
+
+	updates, err := parseChocoOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update (git.install), got %d: %+v", len(updates), updates)
+	}
+	if updates[0].Id != "git.install" {
+		t.Errorf("expected git.install, got %q", updates[0].Id)
+	}
+}
+
+func TestParseChocoUpgradeOutput(t *testing.T) {
+	t.Run("mixed success and failure", func(t *testing.T) {
+		output := `Chocolatey v2.7.5
+Upgrading the following packages:
+git.install;nodejs.install
+
+git.install v2.41.0 was installed successfully.
+The upgrade of nodejs.install was NOT successful.
+
+Failures
+ - nodejs.install (exited 1603) - Error during installation
+
+Chocolatey upgraded 1/2 packages. 1 packages failed.`
+
+		ids := []string{"git.install", "nodejs.install"}
+		results, ok := ParseChocoUpgradeOutput(output, ids)
+		if !ok {
+			t.Fatalf("expected output to be parsed")
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+		if !results[0].Succeeded || results[0].ID != "git.install" {
+			t.Errorf("expected git.install succeeded, got %+v", results[0])
+		}
+		if results[1].Succeeded || results[1].ID != "nodejs.install" || results[1].Error == nil {
+			t.Errorf("expected nodejs.install failed with error, got %+v", results[1])
+		}
+	})
+
+	t.Run("all succeeded", func(t *testing.T) {
+		output := `Chocolatey v2.7.5
+Upgrading the following packages:
+curl;wget
+
+The upgrade of curl was successful.
+The upgrade of wget was successful.
+
+Chocolatey upgraded 2/2 packages.`
+
+		ids := []string{"curl", "wget"}
+		results, ok := ParseChocoUpgradeOutput(output, ids)
+		if !ok {
+			t.Fatalf("expected output to be parsed")
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(results))
+		}
+		if !results[0].Succeeded || !results[1].Succeeded {
+			t.Errorf("expected both packages to succeed: %+v", results)
+		}
+	})
+
+	t.Run("unrecognized output returns false", func(t *testing.T) {
+		ids := []string{"curl"}
+		_, ok := ParseChocoUpgradeOutput("random unformatted text", ids)
+		if ok {
+			t.Errorf("expected false for unrecognized output")
+		}
+	})
+}

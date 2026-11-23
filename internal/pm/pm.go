@@ -2,10 +2,33 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"regexp"
+	"runtime"
+	"strconv"
 	"time"
 )
+
+// InstalledPackage represents an installed package reported by a package manager.
+type InstalledPackage struct {
+	Name        string `json:"name"`
+	ID          string `json:"id"`
+	Version     string `json:"version"`
+	ManagerName string `json:"manager"`
+}
+
+// Lister is an optional interface implemented by managers that can list installed packages.
+type Lister interface {
+	ListInstalled(ctx context.Context) ([]InstalledPackage, error)
+}
+
+// Installer is an optional interface implemented by managers that can install a package by ID and optional version.
+type Installer interface {
+	InstallPackage(ctx context.Context, id, version string) error
+}
 
 // PackageUpdate represents an available update for a package managed by a package manager.
 type PackageUpdate struct {
@@ -65,14 +88,64 @@ type BulkUpgrader interface {
 	UpgradePackages(ctx context.Context, ids []string) error
 }
 
+// BulkPackageResult represents the upgrade result of an individual package in a bulk operation.
+type BulkPackageResult struct {
+	ID        string
+	Succeeded bool
+	Error     error
+}
+
+// DetailedBulkUpgrader is an optional interface implemented by managers that can upgrade
+// multiple packages in one batch and report individual per-package outcomes.
+type DetailedBulkUpgrader interface {
+	UpgradePackagesDetailed(ctx context.Context, ids []string) ([]BulkPackageResult, error)
+}
+
+// OfflineConfigurable is an optional interface implemented by package managers
+// that support operating in offline mode.
+type OfflineConfigurable interface {
+	SetOffline(offline bool)
+}
+
+// NetworkDependent is an optional interface implemented by package managers
+// that strictly require internet access to discover available package updates.
+type NetworkDependent interface {
+	RequiresNetwork() bool
+}
+
 // IOConfigurable is an optional interface implemented by managers that accept custom I/O streams.
 type IOConfigurable interface {
 	SetIO(stdin io.Reader, stdout, stderr io.Writer)
 }
 
+// UpgradeOptions specifies runtime options for package managers during upgrade operations.
+type UpgradeOptions struct {
+	AcceptAgreements bool
+	TrustRepository  bool
+}
+
+// OptionsConfigurable is an optional interface implemented by package managers
+// that accept runtime upgrade configuration options.
+type OptionsConfigurable interface {
+	ConfigureOptions(opts UpgradeOptions)
+}
+
+// WarningFetcher is an optional interface implemented by package managers that can report
+// partial-failure warnings (such as unreachable upstream package registries) alongside
+// successfully fetched package updates.
+type WarningFetcher interface {
+	GetAvailableUpdatesWithWarnings(ctx context.Context) ([]PackageUpdate, []error, error)
+}
+
 // TimeoutProvider is an optional interface implemented by managers that customize their fetch timeout.
 type TimeoutProvider interface {
 	FetchTimeout() time.Duration
+}
+
+// Rollbackable is an optional interface implemented by managers that support
+// rolling back a package to a specific target version.
+type Rollbackable interface {
+	RollbackPackage(ctx context.Context, id, targetVersion string) error
 }
 
 // Runner abstracts command execution so managers can be tested without invoking external binaries.
@@ -83,6 +156,16 @@ type Runner interface {
 // ExecRunner is the default Runner backed by os/exec.
 type ExecRunner struct{}
 
+// IsExecRunner reports whether r is nil or backed by the production ExecRunner.
+func IsExecRunner(r Runner) bool {
+	if r == nil {
+		return true
+	}
+	_, isVal := r.(ExecRunner)
+	_, isPtr := r.(*ExecRunner)
+	return isVal || isPtr
+}
+
 // Run executes an external command with the given streams.
 func (ExecRunner) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -90,4 +173,41 @@ func (ExecRunner) Run(ctx context.Context, name string, args []string, stdin io.
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
+}
+
+var (
+	ansiEscape      = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+	exitStatusRegex = regexp.MustCompile(`(?:^|\b)exit status (-?\d+)(?:\b|$)`)
+)
+
+// StripANSI removes ANSI escape sequences from command output.
+func StripANSI(s string) string {
+	return ansiEscape.ReplaceAllString(s, "")
+}
+
+// WrapSudo prepends sudo when executing privileged Linux package manager commands as a non-root user.
+func WrapSudo(cmd string, args []string) (string, []string) {
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+		if sudoPath, err := exec.LookPath("sudo"); err == nil {
+			return sudoPath, append([]string{cmd}, args...)
+		}
+	}
+	return cmd, args
+}
+
+// ExtractExitCode retrieves the process exit code from an error (supporting *exec.ExitError and mocked "exit status N" errors).
+func ExtractExitCode(err error) (int, bool) {
+	if err == nil {
+		return 0, true
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), true
+	}
+	if m := exitStatusRegex.FindStringSubmatch(err.Error()); len(m) == 2 {
+		if code, convErr := strconv.Atoi(m[1]); convErr == nil {
+			return code, true
+		}
+	}
+	return -1, false
 }

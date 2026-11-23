@@ -3,7 +3,6 @@ package uv
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,23 +13,51 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karan-banwasi/patchwork/internal/httputil"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/version"
+)
+
+var (
+	_ pm.Manager             = (*UvManager)(nil)
+	_ pm.Locator             = (*UvManager)(nil)
+	_ pm.Cleaner             = (*UvManager)(nil)
+	_ pm.WarningFetcher      = (*UvManager)(nil)
+	_ pm.OfflineConfigurable = (*UvManager)(nil)
+	_ pm.NetworkDependent    = (*UvManager)(nil)
+	_ pm.IOConfigurable      = (*UvManager)(nil)
 )
 
 // UvManager implements the pm.Manager interface for Python CLI tools managed by `uv tool`.
 type UvManager struct {
-	runner pm.Runner
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	runner  pm.Runner
+	client  *http.Client
+	offline bool
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 func NewUvManager() *UvManager {
 	return &UvManager{
 		runner: pm.ExecRunner{},
+		client: httputil.NewClient(httputil.WithTimeout(10 * time.Second)),
 		stdout: io.Discard,
 		stderr: io.Discard,
 	}
+}
+
+func (u *UvManager) SetOffline(offline bool) {
+	u.offline = offline
+	httputil.SetClientOffline(u.client, offline)
+}
+
+func (u *UvManager) RequiresNetwork() bool {
+	return true
+}
+
+func (u *UvManager) SetHTTPClient(client *http.Client) {
+	u.client = client
 }
 
 func (u *UvManager) Name() string {
@@ -126,38 +153,11 @@ func parseUvToolList(output string) []pm.PackageUpdate {
 	return tools
 }
 
-type pypiResponse struct {
-	Info struct {
-		Version string `json:"version"`
-	} `json:"info"`
-}
-
-func fetchPyPILatestVersion(ctx context.Context, client *http.Client, pkgName string) string {
-	url := fmt.Sprintf("https://pypi.org/pypi/%s/json", pkgName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("User-Agent", "Patchwork-CLI")
-	resp, err := client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var data pypiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(data.Info.Version)
-}
-
-func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+// GetAvailableUpdatesWithWarnings queries PyPI and collects partial failure warnings.
+func (u *UvManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
 	exe, err := uvPath()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	runner := u.runner
@@ -165,22 +165,36 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 		runner = pm.ExecRunner{}
 	}
 
-	var stdout bytes.Buffer
-	if err := runner.Run(ctx, exe, []string{"tool", "list"}, nil, &stdout, io.Discard); err != nil {
-		return []pm.PackageUpdate{}, nil
+	var stdout, stderr bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"tool", "list"}, nil, &stdout, &stderr); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return nil, nil, fmt.Errorf("failed to list uv tools: %w: %s", err, errMsg)
+		}
+		return nil, nil, fmt.Errorf("failed to list uv tools: %w", err)
 	}
 
 	tools := parseUvToolList(stdout.String())
 	if len(tools) == 0 {
-		return []pm.PackageUpdate{}, nil
+		return []pm.PackageUpdate{}, nil, nil
 	}
 
-	client := &http.Client{Timeout: 8 * time.Second}
+	if u.offline {
+		return []pm.PackageUpdate{}, []error{
+			fmt.Errorf("[%s] offline mode: skipping PyPI remote checks", u.Name()),
+		}, nil
+	}
+
+	client := u.client
+	if client == nil {
+		client = httputil.NewClient(httputil.WithTimeout(10 * time.Second))
+	}
 	var (
-		updates []pm.PackageUpdate
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, 6)
+		updates    []pm.PackageUpdate
+		lookupErrs []error
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		sem        = make(chan struct{}, 6)
 	)
 
 	for _, tool := range tools {
@@ -190,8 +204,14 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			latest := fetchPyPILatestVersion(ctx, client, t.Id)
-			if latest != "" && latest != t.Version {
+			latest, err := httputil.FetchPyPILatestVersion(ctx, client, t.Id)
+			if err != nil {
+				mu.Lock()
+				lookupErrs = append(lookupErrs, fmt.Errorf("%s: %w", t.Id, err))
+				mu.Unlock()
+				return
+			}
+			if latest != "" && version.IsUpgrade("uv", t.Version, latest) {
 				t.AvailableVersion = latest
 				mu.Lock()
 				updates = append(updates, t)
@@ -204,7 +224,21 @@ func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate
 	sort.Slice(updates, func(i, j int) bool {
 		return strings.ToLower(updates[i].Name) < strings.ToLower(updates[j].Name)
 	})
-	return updates, nil
+
+	if len(lookupErrs) > 0 {
+		if len(lookupErrs) == len(tools) {
+			return nil, nil, fmt.Errorf("failed to check any uv tools (0 of %d checked): %v", len(tools), lookupErrs[0])
+		}
+		warning := fmt.Errorf("[%s] %d of %d tools could not be checked; network error: %v", u.Name(), len(lookupErrs), len(tools), lookupErrs[0])
+		return updates, []error{warning}, nil
+	}
+
+	return updates, nil, nil
+}
+
+func (u *UvManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	updates, _, err := u.GetAvailableUpdatesWithWarnings(ctx)
+	return updates, err
 }
 
 func (u *UvManager) UpgradePackage(ctx context.Context, id string) error {

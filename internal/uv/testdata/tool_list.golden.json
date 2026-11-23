@@ -1,0 +1,26 @@
+[
+  {
+    "name": "ruff",
+    "id": "ruff",
+    "version": "0.6.1",
+    "available_version": "",
+    "source": "pypi",
+    "manager": "uv"
+  },
+  {
+    "name": "httpie",
+    "id": "httpie",
+    "version": "3.2.2",
+    "available_version": "",
+    "source": "pypi",
+    "manager": "uv"
+  },
+  {
+    "name": "black",
+    "id": "black",
+    "version": "24.4.2",
+    "available_version": "",
+    "source": "pypi",
+    "manager": "uv"
+  }
+]

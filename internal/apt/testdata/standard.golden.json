@@ -1,0 +1,26 @@
+[
+  {
+    "name": "curl",
+    "id": "curl",
+    "version": "7.68.0-1ubuntu2.22",
+    "available_version": "7.68.0-1ubuntu2.24",
+    "source": "apt",
+    "manager": "apt"
+  },
+  {
+    "name": "git",
+    "id": "git",
+    "version": "1:2.25.1-1ubuntu3.11",
+    "available_version": "1:2.25.1-1ubuntu3.13",
+    "source": "apt",
+    "manager": "apt"
+  },
+  {
+    "name": "libssl1.1",
+    "id": "libssl1.1",
+    "version": "1.1.1f-1ubuntu2.23",
+    "available_version": "1.1.1f-1ubuntu2.24",
+    "source": "apt",
+    "manager": "apt"
+  }
+]

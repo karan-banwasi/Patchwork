@@ -1,0 +1,33 @@
+## pw
+
+Patchwork is a CLI tool to manage package updates
+
+### Synopsis
+
+Patchwork iterates through packages that have available updates and helps manage them across 24 supported package managers: Homebrew, Mac App Store (mas), Winget, Scoop, Chocolatey, PowerShell PSResource, APT, DNF, Pacman, Zypper, Flatpak, Snap, npm Global, pnpm Global, Bun Global, .NET Global Tools, uv Python Tools, pipx Python Apps, Rust Cargo Crates, Rustup Toolchains, RubyGems, mise, asdf, and VS Code Extensions. Automatically detects host platform and queries only relevant managers.
+
+### Options
+
+```
+  -h, --help   help for pw
+```
+
+### SEE ALSO
+
+* [pw check](pw_check.md)	 - Check for available updates
+* [pw cleanup](pw_cleanup.md)	 - Clean up old package versions and download caches
+* [pw completion](pw_completion.md)	 - Generate shell completion script
+* [pw config](pw_config.md)	 - Manage Patchwork configuration
+* [pw doctor](pw_doctor.md)	 - Show system diagnostics and detected package managers
+* [pw export](pw_export.md)	 - Export installed packages and pins to a machine profile
+* [pw history](pw_history.md)	 - Show or clear upgrade history
+* [pw import](pw_import.md)	 - Import packages and pins from a machine profile
+* [pw pin](pw_pin.md)	 - Pin one or more packages to ignore them during check and upgrade
+* [pw pinned](pw_pinned.md)	 - List all pinned (ignored) packages
+* [pw rollback](pw_rollback.md)	 - Roll back upgraded packages to a previous version
+* [pw schedule](pw_schedule.md)	 - Manage scheduled background update checks and desktop notifications
+* [pw self-update](pw_self-update.md)	 - Update Patchwork (pw) to the latest release
+* [pw unpin](pw_unpin.md)	 - Unpin one or more previously pinned packages
+* [pw upgrade](pw_upgrade.md)	 - Upgrade available packages
+* [pw version](pw_version.md)	 - Print the version number of Patchwork
+

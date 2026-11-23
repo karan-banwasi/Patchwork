@@ -1,113 +1,174 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"text/template"
 
-	"github.com/AlecAivazis/survey/v2"
-	"github.com/AlecAivazis/survey/v2/core"
+	"github.com/karan-banwasi/patchwork/internal/config"
+	"github.com/karan-banwasi/patchwork/internal/exitcodes"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
 )
 
-func TestSurveyMultiSelectTemplateRendering(t *testing.T) {
-	initSurveyTemplates()
-	tmpl, err := template.New("prompt").Funcs(core.TemplateFuncsWithColor).Parse(survey.MultiSelectQuestionTemplate)
+func TestUpgradeCmd_InteractiveWithMockSelector(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			{Id: "pkg.two", Name: "PkgTwo", Version: "2.0", AvailableVersion: "3.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Select only the second package (index 1: pkg.two)
+	mockSel := &MockMultiSelector{SelectedIndices: []int{1}}
+	SetDefaultSelectorForTest(mockSel)
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--no-refresh"})
+
+	err := cmd.Execute()
 	if err != nil {
-		t.Fatalf("failed to parse template: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	opts := []string{
-		"Outlook for Windows   Microsoft.Outlook   1.2026.811.200   1.2026.812.100   winget",
-		"Git                   Git.Git             2.55.0.2         2.55.0.3         winget",
+	if len(mockMgr.upgradedIDs) != 1 || mockMgr.upgradedIDs[0] != "pkg.two" {
+		t.Errorf("expected only pkg.two upgraded, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_InteractiveCanceled(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	mockSel := &MockMultiSelector{Err: ErrSelectionCanceled}
+	SetDefaultSelectorForTest(mockSel)
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error on canceled selection, got nil")
+	}
+	exitCode := exitcodes.Determine(context.Background(), err)
+	if exitCode != exitcodes.ExitCanceled {
+		t.Errorf("expected exit code %d (ExitCanceled), got: %d", exitcodes.ExitCanceled, exitCode)
+	}
+	if !strings.Contains(stdout.String(), "Selection canceled.") {
+		t.Errorf("expected cancellation message, got: %s", stdout.String())
+	}
+	if len(mockMgr.upgradedIDs) != 0 {
+		t.Errorf("expected no packages upgraded, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_JsonRequiresAllOrArgs(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "mockpm"}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "--json"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error when --json used without --all or args, got nil")
+	}
+	if !strings.Contains(err.Error(), "--json requires either --all or explicit package IDs") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestUpgradeCmd_JsonDryRun(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--json", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 0 selected
-	var buf0 strings.Builder
-	err = tmpl.Execute(&buf0, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{},
-		Answer:      "",
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 0 selected: %v", err)
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON output (%v):\n%s", err, stdout.String())
 	}
-	if strings.Contains(buf0.String(), "Outlook") {
-		t.Errorf("unexpected output for 0 selections: %s", buf0.String())
+	if summary.SchemaVersion != "1.0.0" {
+		t.Errorf("expected schema_version 1.0.0, got %q", summary.SchemaVersion)
+	}
+	if !summary.DryRun {
+		t.Errorf("expected dry_run to be true in JSON output")
+	}
+	if len(summary.Results) != 1 || summary.Results[0].Package.ID != "pkg.one" {
+		t.Errorf("unexpected results in JSON: %+v", summary.Results)
+	}
+}
+
+func TestUpgradeCmd_JsonExecution(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--json", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 1 selected
-	var buf1 strings.Builder
-	err = tmpl.Execute(&buf1, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{0: true},
-		Answer:      opts[0],
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 1 selected: %v", err)
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("failed to unmarshal JSON output (%v):\n%s", err, stdout.String())
 	}
-	if !strings.Contains(buf1.String(), "\n  ") || !strings.Contains(buf1.String(), opts[0]) {
-		t.Errorf("expected package on new line with indent, got: %s", buf1.String())
+	if summary.SchemaVersion != "1.0.0" {
+		t.Errorf("expected schema_version 1.0.0, got %q", summary.SchemaVersion)
 	}
-
-	// 2 selected
-	var buf2 strings.Builder
-	err = tmpl.Execute(&buf2, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		Checked:     map[int]bool{0: true, 1: true},
-		Answer:      strings.Join(opts, ", "),
-		ShowAnswer:  true,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render 2 selected: %v", err)
+	if summary.DryRun {
+		t.Errorf("expected dry_run to be false in execution JSON output")
 	}
-	lines := strings.Split(buf2.String(), "\n")
-	var packageLines []string
-	for _, l := range lines {
-		if strings.Contains(l, "winget") {
-			packageLines = append(packageLines, l)
-		}
+	if summary.Total != 1 || summary.Succeeded != 1 {
+		t.Errorf("unexpected summary counts: total=%d, succeeded=%d", summary.Total, summary.Succeeded)
 	}
-	if len(packageLines) != 2 {
-		t.Errorf("expected 2 package lines, got %d. Output:\n%s", len(packageLines), buf2.String())
-	}
-
-	// ShowAnswer = false (Interactive options list)
-	var bufInteractive strings.Builder
-	pageEntries := []core.OptionAnswer{
-		{Index: 0, Value: opts[0]},
-		{Index: 1, Value: opts[1]},
-	}
-	err = tmpl.Execute(&bufInteractive, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		PageEntries: pageEntries,
-		Checked:     map[int]bool{0: true},
-		ShowAnswer:  false,
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("failed to render interactive prompt: %v", err)
-	}
-	t.Logf("Interactive output:\n%s", bufInteractive.String())
-
-	// Test core.RunTemplate
-	res, _, err := core.RunTemplate(survey.MultiSelectQuestionTemplate, survey.MultiSelectTemplateData{
-		MultiSelect: survey.MultiSelect{Message: "Select packages to upgrade:", Options: opts},
-		PageEntries: pageEntries,
-		Checked:     map[int]bool{0: true},
-		ShowAnswer:  true,
-		Answer:      opts[0],
-		Config:      &survey.PromptConfig{Icons: survey.IconSet{Question: survey.Icon{Text: "?"}}},
-	})
-	if err != nil {
-		t.Fatalf("core.RunTemplate failed: %v", err)
-	}
-	t.Logf("core.RunTemplate output: %s", res)
 }
 
 func TestUpgradeCmd_MutuallyExclusiveAllAndArg(t *testing.T) {
@@ -147,6 +208,10 @@ func TestUpgradeCmd_MutuallyExclusiveByManagerAndArg(t *testing.T) {
 }
 
 func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "winget"}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
 	input := []pm.PackageUpdate{
 		{Id: "Microsoft.PowerShell", Name: "PowerShell", ManagerName: "winget"},
 		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
@@ -154,7 +219,7 @@ func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
 		{Id: "OpenJS.NodeJS.LTS", Name: "Node.js LTS", ManagerName: "winget"},
 	}
 
-	ordered := orderSelectedPackages(input)
+	ordered := upgrade.OrderTargets(registryOverride, input)
 	expectedOrder := []string{
 		"Git.Git",
 		"OpenJS.NodeJS.LTS",
@@ -172,7 +237,7 @@ func TestOrderSelectedPackages_DefersShellAndTerminal(t *testing.T) {
 	}
 }
 
-func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
+func TestFilterPins_SkipsPinnedUnlessForced(t *testing.T) {
 	tmpCfg := t.TempDir() + "/config.json"
 	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
 
@@ -187,16 +252,345 @@ func TestSplitPinnedTargets_SkipsPinnedUnlessForced(t *testing.T) {
 		{Id: "Git.Git", Name: "Git", ManagerName: "scoop"},
 	}
 
-	allowed, skipped := splitPinnedTargets(targets, false)
+	allowed, skipped, err := upgrade.FilterPins(targets, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(allowed) != 1 || allowed[0].ManagerName != "scoop" {
 		t.Errorf("expected only scoop Git.Git to be allowed, got: %+v", allowed)
 	}
-	if len(skipped) != 1 || skipped[0].status != "Skipped (pinned)" {
+	if len(skipped) != 1 || skipped[0].Status != upgrade.StatusSkippedPinned {
 		t.Errorf("expected winget Git.Git to be Skipped (pinned), got: %+v", skipped)
 	}
 
-	allowedForced, skippedForced := splitPinnedTargets(targets, true)
+	allowedForced, skippedForced, err := upgrade.FilterPins(targets, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(allowedForced) != 2 || len(skippedForced) != 0 {
 		t.Errorf("expected all targets allowed when ignorePins=true, got allowed=%d, skipped=%d", len(allowedForced), len(skippedForced))
+	}
+}
+
+func TestFilterPins_CorruptConfigFailsClosed(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	if err := os.WriteFile(tmpCfg, []byte("{ bad-json: 123"), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	targets := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	_, _, err := upgrade.FilterPins(targets, false)
+	if err == nil {
+		t.Fatalf("expected error from FilterPins on corrupt config, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot verify pinned packages") {
+		t.Errorf("expected fail-closed error message, got: %v", err)
+	}
+
+	// Forced override succeeds
+	allowed, _, err := upgrade.FilterPins(targets, true)
+	if err != nil {
+		t.Fatalf("expected forced FilterPins to succeed, got: %v", err)
+	}
+	if len(allowed) != 1 {
+		t.Errorf("expected 1 allowed target, got %d", len(allowed))
+	}
+}
+
+func TestUpgradeCmd_DisabledManagerRejectedWithPackageArg(t *testing.T) {
+	mockMgr := &mockUpgradeManager{name: "winget"}
+	reg := pm.NewRegistry(mockMgr)
+	reg.SetDisabled([]string{"winget"})
+	registryOverride = reg
+	t.Cleanup(func() { registryOverride = nil })
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"upgrade", "Git.Git", "-m", "winget", "--dry-run"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "disabled in configuration") {
+		t.Fatalf("expected disabled manager error when upgrading explicit package with -m, got: %v", err)
+	}
+}
+
+func TestUpgradeCmd_AcceptAgreementsNotice(t *testing.T) {
+	var buf bytes.Buffer
+	pkgs := []pm.PackageUpdate{
+		{Id: "Git.Git", Name: "Git", ManagerName: "winget"},
+	}
+
+	// When acceptAgreements is true, prints notice
+	maybePrintWingetAgreementsNotice(&buf, pkgs, true)
+	if !strings.Contains(buf.String(), "Notice: Automatically accepting Winget package and source agreements") {
+		t.Errorf("expected agreement notice, got: %s", buf.String())
+	}
+
+	// When acceptAgreements is false, does not print notice
+	buf.Reset()
+	maybePrintWingetAgreementsNotice(&buf, pkgs, false)
+	if buf.Len() != 0 {
+		t.Errorf("expected no notice when acceptAgreements=false, got: %s", buf.String())
+	}
+
+	// When no winget packages are present, does not print notice
+	buf.Reset()
+	nonWinget := []pm.PackageUpdate{
+		{Id: "git", Name: "git", ManagerName: "brew"},
+	}
+	maybePrintWingetAgreementsNotice(&buf, nonWinget, true)
+	if buf.Len() != 0 {
+		t.Errorf("expected no notice for non-winget packages, got: %s", buf.String())
+	}
+}
+
+func TestUpgradeCmd_DefaultTimeoutIsZero(t *testing.T) {
+	cmd := newUpgradeCmd()
+	f := cmd.Flags().Lookup("timeout")
+	if f == nil {
+		t.Fatalf("expected --timeout flag to exist")
+	}
+	if f.DefValue != "0s" && f.DefValue != "0" {
+		t.Errorf("expected default timeout to be 0s, got: %s", f.DefValue)
+	}
+}
+
+type mockUpgradeManager struct {
+	name        string
+	updates     []pm.PackageUpdate
+	upgradedIDs []string
+}
+
+func (m *mockUpgradeManager) Name() string                         { return m.name }
+func (m *mockUpgradeManager) Aliases() []string                    { return nil }
+func (m *mockUpgradeManager) IsAvailable(ctx context.Context) bool { return true }
+func (m *mockUpgradeManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
+	return m.updates, nil
+}
+func (m *mockUpgradeManager) UpgradePackage(ctx context.Context, id string) error {
+	m.upgradedIDs = append(m.upgradedIDs, id)
+	return nil
+}
+func (m *mockUpgradeManager) ValidateID(id string) error { return nil }
+func (m *mockUpgradeManager) ShouldDefer(id string) bool {
+	lower := strings.ToLower(id)
+	return strings.Contains(lower, "powershell") || strings.Contains(lower, "terminal")
+}
+
+func TestUpgradeCmd_DryRunAllPlan(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "mockpm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			{Id: "pkg.two", Name: "PkgTwo", Version: "2.0", AvailableVersion: "3.0", ManagerName: "mockpm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected dry-run upgrade to succeed, got: %v", err)
+	}
+
+	outStr := stdout.String()
+	if !strings.Contains(outStr, "[Dry Run] Would upgrade 2 package(s):") {
+		t.Errorf("expected dry run header, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "=== Upgrade Summary ===") {
+		t.Errorf("expected upgrade summary table, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "Dry-Run") {
+		t.Errorf("expected Dry-Run status in summary table, got: %s", outStr)
+	}
+
+	if len(mockMgr.upgradedIDs) != 0 {
+		t.Errorf("expected 0 packages upgraded during dry-run, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+type mockOptionsManager struct {
+	mockUpgradeManager
+	configuredOpts pm.UpgradeOptions
+}
+
+func (m *mockOptionsManager) ConfigureOptions(opts pm.UpgradeOptions) {
+	m.configuredOpts = opts
+}
+
+func TestUpgradeCmd_DefaultFlagsMerging(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	fVal := false
+	tVal := true
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			AcceptAgreements: &fVal,
+			TrustRepository:  &tVal,
+			Timeout:          "15s",
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	mockMgr := &mockOptionsManager{
+		mockUpgradeManager: mockUpgradeManager{
+			name: "mockpm",
+			updates: []pm.PackageUpdate{
+				{Id: "pkg.one", Name: "PkgOne", Version: "1.0", AvailableVersion: "2.0", ManagerName: "mockpm"},
+			},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Run without explicit flags: defaults from config should apply
+	cmd := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("upgrade execute: %v", err)
+	}
+
+	if mockMgr.configuredOpts.AcceptAgreements != false {
+		t.Errorf("expected AcceptAgreements to be false from config default, got: %v", mockMgr.configuredOpts.AcceptAgreements)
+	}
+	if mockMgr.configuredOpts.TrustRepository != true {
+		t.Errorf("expected TrustRepository to be true from config default, got: %v", mockMgr.configuredOpts.TrustRepository)
+	}
+
+	// Run with explicit flag overriding config: --accept-agreements
+	mockMgr.configuredOpts = pm.UpgradeOptions{}
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&stdout)
+	cmd2.SetErr(&stderr)
+	cmd2.SetArgs([]string{"upgrade", "--all", "--dry-run", "--no-refresh", "--accept-agreements"})
+
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("upgrade execute: %v", err)
+	}
+
+	if mockMgr.configuredOpts.AcceptAgreements != true {
+		t.Errorf("expected explicit CLI flag --accept-agreements to override config default, got: %v", mockMgr.configuredOpts.AcceptAgreements)
+	}
+}
+
+func TestUpgradeCmd_YesBypassesSelector(t *testing.T) {
+	mockMgr := &mockUpgradeManager{
+		name: "npm",
+		updates: []pm.PackageUpdate{
+			{Id: "pkg-a", Name: "pkg-a", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "npm"},
+			{Id: "pkg-b", Name: "pkg-b", Version: "1.0.0", AvailableVersion: "1.1.0", ManagerName: "npm"},
+		},
+	}
+	registryOverride = pm.NewRegistry(mockMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// Selector would fail/cancel if invoked
+	SetDefaultSelectorForTest(&MockMultiSelector{Err: ErrSelectionCanceled})
+	t.Cleanup(func() { SetDefaultSelectorForTest(nil) })
+
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "--yes", "--no-refresh"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected upgrade --yes to succeed without invoking selector, got: %v", err)
+	}
+
+	if len(mockMgr.upgradedIDs) != 2 {
+		t.Errorf("expected both packages upgraded with --yes, got: %v", mockMgr.upgradedIDs)
+	}
+}
+
+func TestUpgradeCmd_PoliciesChangelogAndConcurrency(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PATCHWORK_CONFIG", tmpCfg)
+
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			Level:   "minor",
+			Exclude: []string{"cargo:*skip*"},
+		},
+	}
+	if err := cfg.SaveTo(tmpCfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	npmMgr := &mockUpgradeManager{
+		name: "npm",
+		updates: []pm.PackageUpdate{
+			{Id: "eslint", Name: "eslint", Version: "8.0.0", AvailableVersion: "9.0.0", ManagerName: "npm"},     // major -> skipped
+			{Id: "prettier", Name: "prettier", Version: "3.0.0", AvailableVersion: "3.1.0", ManagerName: "npm"}, // minor -> allowed
+		},
+	}
+	cargoMgr := &mockUpgradeManager{
+		name: "cargo",
+		updates: []pm.PackageUpdate{
+			{Id: "skip-me", Name: "skip-me", Version: "1.0.0", AvailableVersion: "1.0.1", ManagerName: "cargo"},   // excluded -> skipped
+			{Id: "ripgrep", Name: "ripgrep", Version: "14.0.0", AvailableVersion: "14.0.1", ManagerName: "cargo"}, // patch -> allowed
+		},
+	}
+	registryOverride = pm.NewRegistry(npmMgr, cargoMgr)
+	t.Cleanup(func() { registryOverride = nil })
+
+	// 1. Dry-run with --yes, --changelog, and config defaults
+	var stdout, stderr bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"upgrade", "-y", "--dry-run", "--changelog", "--no-refresh"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "=== Changelog Preview ===") || !strings.Contains(out, "https://www.npmjs.com/package/prettier") {
+		t.Errorf("expected changelog preview in dry-run output:\n%s", out)
+	}
+	if !strings.Contains(out, "Skipped (level)") || !strings.Contains(out, "Skipped (excluded)") {
+		t.Errorf("expected policy skip statuses in summary:\n%s", out)
+	}
+	if len(npmMgr.upgradedIDs) != 0 || len(cargoMgr.upgradedIDs) != 0 {
+		t.Errorf("expected no upgrades in dry-run")
+	}
+
+	// 2. Actual execution with -y -j 2 --json
+	stdout.Reset()
+	cmd2 := NewRootCmd()
+	cmd2.SetOut(&stdout)
+	cmd2.SetErr(&stderr)
+	cmd2.SetArgs([]string{"upgrade", "-y", "-j", "2", "--json", "--no-refresh"})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("upgrade -y -j 2 --json failed: %v", err)
+	}
+
+	var summary upgrade.JSONSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("unmarshal json: %v\n%s", err, stdout.String())
+	}
+	if summary.Succeeded != 2 || summary.Skipped != 2 || summary.Total != 4 {
+		t.Errorf("unexpected summary counts: %+v", summary)
+	}
+	if len(npmMgr.upgradedIDs) != 1 || npmMgr.upgradedIDs[0] != "prettier" {
+		t.Errorf("expected only prettier upgraded for npm, got %v", npmMgr.upgradedIDs)
+	}
+	if len(cargoMgr.upgradedIDs) != 1 || cargoMgr.upgradedIDs[0] != "ripgrep" {
+		t.Errorf("expected only ripgrep upgraded for cargo, got %v", cargoMgr.upgradedIDs)
 	}
 }

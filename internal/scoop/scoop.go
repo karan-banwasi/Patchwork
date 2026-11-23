@@ -14,7 +14,13 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
-var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[mGKHFABCDJsuhl?]`)
+var (
+	_ pm.Manager        = (*ScoopManager)(nil)
+	_ pm.Locator        = (*ScoopManager)(nil)
+	_ pm.Cleaner        = (*ScoopManager)(nil)
+	_ pm.Refresher      = (*ScoopManager)(nil)
+	_ pm.IOConfigurable = (*ScoopManager)(nil)
+)
 
 // ScoopManager implements the pm.Manager interface for Scoop package manager.
 type ScoopManager struct {
@@ -102,7 +108,15 @@ func (s *ScoopManager) Refresh(ctx context.Context) error {
 	if runner == nil {
 		runner = pm.ExecRunner{}
 	}
-	return runner.Run(ctx, exe, []string{"update"}, nil, io.Discard, io.Discard)
+	var errBuf bytes.Buffer
+	if err := runner.Run(ctx, exe, []string{"update"}, nil, io.Discard, &errBuf); err != nil {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 // scoopPath resolves the path to scoop CLI executable.
@@ -173,11 +187,6 @@ func (s *ScoopManager) GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpd
 	return updates, nil
 }
 
-// GetAvailableUpdates is a package-level helper for convenience.
-func GetAvailableUpdates(ctx context.Context) ([]pm.PackageUpdate, error) {
-	return NewScoopManager().GetAvailableUpdates(ctx)
-}
-
 // indexRunes returns the rune index of sub within runes, or -1 if not found.
 func indexRunes(runes []rune, sub string) int {
 	subRunes := []rune(sub)
@@ -202,7 +211,7 @@ func indexRunes(runes []rune, sub string) int {
 // parseScoopOutput parses the output from `scoop status`.
 func parseScoopOutput(output string) ([]pm.PackageUpdate, error) {
 	var updates []pm.PackageUpdate
-	cleanOutput := ansiEscape.ReplaceAllString(output, "")
+	cleanOutput := pm.StripANSI(output)
 	lines := strings.Split(cleanOutput, "\n")
 
 	headerIdx := -1

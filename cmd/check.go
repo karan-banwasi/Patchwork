@@ -1,14 +1,14 @@
 package cmd
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/karan-banwasi/patchwork/internal/config"
 	"github.com/karan-banwasi/patchwork/internal/pm"
+	"github.com/karan-banwasi/patchwork/internal/upgrade"
+	semver "github.com/karan-banwasi/patchwork/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +19,11 @@ type checkOptions struct {
 	quiet         bool
 	includePinned bool
 	noRefresh     bool
+	offline       bool
 	timeout       time.Duration
+	exclude       []string
+	level         string
+	changelog     bool
 }
 
 func newCheckCmd() *cobra.Command {
@@ -30,10 +34,21 @@ func newCheckCmd() *cobra.Command {
 		Short: "Check for available updates",
 		Long:  `Iterate through supported package managers and check for available updates without installing them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			registry := getDefaultRegistry()
+			registry, cfg := getDefaultRegistryAndConfig()
 			out := cmd.OutOrStdout()
 			errOut := cmd.ErrOrStderr()
 			configureRegistryIO(registry, cmd.InOrStdin(), out, errOut)
+
+			hydrateCommonDefaults(cmd, cfg, &opts.timeout, &opts.noRefresh, &opts.level, &opts.exclude)
+
+			if _, err := semver.ParseLevel(opts.level); err != nil {
+				return err
+			}
+
+			if opts.offline {
+				opts.noRefresh = true
+				registry.SetOffline(true)
+			}
 
 			if opts.timeout > 0 {
 				registry.FetchTimeout = opts.timeout
@@ -42,40 +57,25 @@ func newCheckCmd() *cobra.Command {
 
 			silentStatus := opts.json || opts.quiet
 
-			var updates []pm.PackageUpdate
-			var warnings []error
-			var err error
-
+			var filter []string
 			if opts.manager != "" {
-				mgr, exists := registry.GetManager(opts.manager)
-				if !exists {
-					return fmt.Errorf("unknown package manager %q (supported: %s)", opts.manager, strings.Join(registry.ManagerNames(), ", "))
-				}
-				if !mgr.IsAvailable(cmd.Context()) {
-					return fmt.Errorf("package manager %q is not installed or available on this system", opts.manager)
-				}
-				if !silentStatus {
-					fmt.Fprintf(out, "Checking for available updates using %s...\n", mgr.Name())
-				}
-				cctx, cancel := context.WithTimeout(cmd.Context(), registry.FetchTimeout)
-				defer cancel()
-				if !opts.noRefresh {
-					if refresher, ok := mgr.(pm.Refresher); ok {
-						_ = refresher.Refresh(cctx)
-					}
-				}
-				updates, err = mgr.GetAvailableUpdates(cctx)
+				mgr, err := resolveManager(cmd.Context(), registry, opts.manager, true, true)
 				if err != nil {
 					return err
+				}
+				filter = append(filter, opts.manager)
+				if !silentStatus {
+					fmt.Fprintf(out, "Checking for available updates using %s...\n", mgr.Name())
 				}
 			} else {
 				if !silentStatus {
 					fmt.Fprintln(out, "Checking for available updates across all supported package managers...")
 				}
-				updates, warnings, err = registry.FetchAllUpdatesWithWarnings(cmd.Context())
-				if err != nil {
-					return err
-				}
+			}
+
+			updates, warnings, err := registry.FetchUpdates(cmd.Context(), filter...)
+			if err != nil {
+				return err
 			}
 
 			for _, w := range warnings {
@@ -90,7 +90,16 @@ func newCheckCmd() *cobra.Command {
 			// Filter pinned packages unless explicitly requested
 			pinnedCount := 0
 			if !opts.includePinned {
-				updates, pinnedCount = filterOutPinned(updates)
+				var err error
+				updates, pinnedCount, err = filterOutPinned(updates)
+				if err != nil {
+					return fmt.Errorf("cannot verify pinned packages: %w (use --include-pinned to bypass)", err)
+				}
+			}
+
+			updates, policySkipped, err := upgrade.FilterPolicies(updates, opts.exclude, opts.level)
+			if err != nil {
+				return err
 			}
 
 			if opts.json {
@@ -100,28 +109,35 @@ func newCheckCmd() *cobra.Command {
 					Version          string `json:"version"`
 					AvailableVersion string `json:"available_version"`
 					Manager          string `json:"manager"`
+					ChangelogURL     string `json:"changelog_url,omitempty"`
 				}
 				type jsonOutput struct {
-					Updates []jsonPackage `json:"updates"`
-					Count   int           `json:"count"`
-					Pinned  int           `json:"pinned_skipped,omitempty"`
+					SchemaVersion string        `json:"schema_version"`
+					Updates       []jsonPackage `json:"updates"`
+					Count         int           `json:"count"`
+					Pinned        int           `json:"pinned_skipped,omitempty"`
+					Filtered      int           `json:"policy_skipped,omitempty"`
 				}
 				outList := make([]jsonPackage, 0, len(updates))
 				for _, u := range updates {
-					outList = append(outList, jsonPackage{
+					jp := jsonPackage{
 						Name:             u.Name,
 						ID:               u.Id,
 						Version:          u.Version,
 						AvailableVersion: u.AvailableVersion,
 						Manager:          u.ManagerName,
-					})
+					}
+					if opts.changelog {
+						jp.ChangelogURL = upgrade.ChangelogURL(u)
+					}
+					outList = append(outList, jp)
 				}
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(jsonOutput{
-					Updates: outList,
-					Count:   len(outList),
-					Pinned:  pinnedCount,
+				return encodeIndentedJSON(out, jsonOutput{
+					SchemaVersion: upgrade.CurrentSchemaVersion,
+					Updates:       outList,
+					Count:         len(outList),
+					Pinned:        pinnedCount,
+					Filtered:      len(policySkipped),
 				})
 			}
 
@@ -133,8 +149,12 @@ func newCheckCmd() *cobra.Command {
 			}
 
 			if len(updates) == 0 {
-				if pinnedCount > 0 {
+				if pinnedCount > 0 && len(policySkipped) > 0 {
+					fmt.Fprintf(out, "No updates available (%d pinned, %d filtered by policy).\n", pinnedCount, len(policySkipped))
+				} else if pinnedCount > 0 {
 					fmt.Fprintf(out, "No updates available (%d pinned package(s) skipped; use --include-pinned to see them).\n", pinnedCount)
+				} else if len(policySkipped) > 0 {
+					fmt.Fprintf(out, "No updates available (%d package(s) filtered by policy).\n", len(policySkipped))
 				} else {
 					fmt.Fprintln(out, "No updates available. Everything is up to date!")
 				}
@@ -164,19 +184,22 @@ func newCheckCmd() *cobra.Command {
 						fmt.Fprintf(out, rowFmt, pkg.Name, pkg.Id, pkg.Version, pkg.AvailableVersion)
 					}
 				}
-				return nil
+			} else {
+				fmt.Fprintln(out)
+				maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(updates)
+
+				headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds    %%-%ds   %%s\n", maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
+
+				fmt.Fprintf(out, headerFmt, "Name", "ID", "Version", "Available", "Manager")
+				fmt.Fprintf(out, headerFmt, strings.Repeat("-", maxNameLen), strings.Repeat("-", maxIdLen), strings.Repeat("-", maxVersionLen), strings.Repeat("-", maxAvailLen), "-------")
+
+				for _, pkg := range updates {
+					fmt.Fprintf(out, "  %s\n", formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen, maxAvailLen))
+				}
 			}
 
-			fmt.Fprintln(out)
-			maxNameLen, maxIdLen, maxVersionLen, maxAvailLen := getDefaultPackageColumnWidths(updates)
-
-			headerFmt := fmt.Sprintf("  %%-%ds   %%-%ds   %%-%ds    %%-%ds   %%s\n", maxNameLen, maxIdLen, maxVersionLen, maxAvailLen)
-
-			fmt.Fprintf(out, headerFmt, "Name", "ID", "Version", "Available", "Manager")
-			fmt.Fprintf(out, headerFmt, strings.Repeat("-", maxNameLen), strings.Repeat("-", maxIdLen), strings.Repeat("-", maxVersionLen), strings.Repeat("-", maxAvailLen), "-------")
-
-			for _, pkg := range updates {
-				fmt.Fprintf(out, "  %s\n", formatUpdateRow(pkg, maxNameLen, maxIdLen, maxVersionLen, maxAvailLen))
+			if opts.changelog {
+				upgrade.RenderChangelogPreview(out, updates)
 			}
 			return nil
 		},
@@ -188,8 +211,13 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.quiet, "quiet", "q", false, "Output only tab-separated package IDs and versions")
 	cmd.Flags().BoolVar(&opts.includePinned, "include-pinned", false, "Include pinned packages in the check output")
 	cmd.Flags().BoolVar(&opts.noRefresh, "no-refresh", false, "Skip bucket/repository refresh before checking updates")
-	cmd.Flags().DurationVar(&opts.timeout, "timeout", pm.DefaultFetchTimeout, "Per-manager timeout when querying updates")
+	cmd.Flags().BoolVar(&opts.offline, "offline", false, "Disable network access and check using only local caches")
+	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-manager timeout when querying updates (0 uses manager defaults)")
+	cmd.Flags().StringSliceVar(&opts.exclude, "exclude", nil, "Exclude packages matching glob pattern (comma-separated or repeatable)")
+	cmd.Flags().StringVar(&opts.level, "level", "", "Maximum semver bump level to include (patch, minor, major)")
+	cmd.Flags().BoolVar(&opts.changelog, "changelog", false, "Display changelog/release preview URLs for available updates")
 	_ = cmd.RegisterFlagCompletionFunc("manager", completeManagerNames)
+	_ = cmd.RegisterFlagCompletionFunc("level", completeLevelNames)
 
 	return cmd
 }

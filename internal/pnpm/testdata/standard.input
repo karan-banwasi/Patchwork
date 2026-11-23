@@ -1,0 +1,12 @@
+{
+  "typescript": {
+    "current": "5.2.2",
+    "latest": "5.3.3",
+    "wanted": "5.2.2"
+  },
+  "prettier": {
+    "current": "3.0.3",
+    "latest": "3.1.0",
+    "wanted": "3.0.3"
+  }
+}

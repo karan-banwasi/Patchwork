@@ -32,3 +32,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build & release artifacts
+/pw
+/pw-*
+/dist/
+
+# Winget local generated manifests
+winget/manifests/
+
+# Local AI agent scratch/orchestration state
+.agents/

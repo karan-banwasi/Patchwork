@@ -1,29 +1,56 @@
 # Patchwork: Agent Context & Guidelines
 
 ## Project Overview
-Patchwork is a Windows CLI utility designed to iterate through packages that have available updates and manage them. 
+Patchwork is a cross-platform CLI utility designed to iterate through packages that have available updates and manage them seamlessly across Windows, macOS, and Linux.
 
 ## Technology Stack
-- **Language**: Go (Primary)
-- **Target OS**: Windows
+- **Language**: Go 1.27.4 (Primary)
+- **Target OS**: Windows, macOS, Linux (Cross-Platform)
 - **CLI Framework**: Cobra (`github.com/spf13/cobra`)
-- **Interactive UI**: Survey (`github.com/AlecAivazis/survey/v2`)
+- **Interactive UI**: Built-in arrow-key/spacebar interactive TUI selector keyed by index (`cmd/selector.go`)
+- **Execution & Networking**: Decoupled `pm.Runner` command execution abstraction; resilient `internal/httputil` client with exponential backoff and offline gating
 
-## Core Features (Initial Phase)
-1. **Winget Integration**: Iterate through packages managed by Windows Package Manager (`winget`) that have updates available.
-2. **Extensibility**: The architecture should allow for adding other package managers (e.g., Chocolatey, Scoop) in the future.
-3. **Interactive Selection**: Provides a visual multi-select checklist to allow the user to easily pick which packages to upgrade without memorizing IDs.
+## Core Features
+1. **Multi-Manager Support (24 Managers)**:
+   - **macOS / Linux**: Homebrew (`brew`) for formulae and casks.
+   - **macOS**: Mac App Store (`mas`).
+   - **Linux**: APT (`apt`), DNF (`dnf`), Pacman (`pacman`), Zypper (`zypper`), Flatpak (`flatpak`), Snap (`snap`).
+   - **Windows**: Winget (`winget`), Scoop (`scoop`), Chocolatey (`choco`), and PowerShell PSResource (`psresource`).
+   - **Cross-Platform**: npm Global (`npm`), pnpm Global (`pnpm`), Bun Global (`bun`), .NET Global Tools (`dotnet`), uv Python Tools (`uv`), pipx Python Apps (`pipx`), Rust Cargo Crates (`cargo`), Rustup Toolchains (`rustup`), RubyGems (`gem`), mise (`mise`), asdf (`asdf`), VS Code Extensions (`vscode`).
+2. **Platform Awareness**: The CLI automatically filters and detects package managers appropriate for the host OS via build tags and runtime availability probes.
+3. **Interactive Selection & Batching**: Provides an interactive arrow-key/spacebar checkbox selector (`↑`/`↓`, `Space` to toggle, `→` all, `←` none, `Enter` to confirm) keyed internally by index. Supports detailed bulk upgrades for managers that support it (e.g. Chocolatey).
+4. **Command Pipeline**: Structured `plan` / `execute` pipeline (`internal/upgrade`) featuring dry-run simulation, deferral of self-updating shells/terminals, pin enforcement, policy filtering (`--exclude`, `--level`), changelog previews (`--changelog`), and bounded cross-manager parallelism (`-j`/`--concurrency`).
+5. **Ecosystem-Aware Version Comparison**: Semver and epoch-aware comparison (`internal/version`) preventing false upgrades and downgrades.
+6. **Package Pinning & Configuration**: Skip updates globally or per-manager with optional version constraints, reasons, and expiration (`pw pin`, `pw unpin`, `pw pinned`), managed alongside defaults via `pw config` and backed by atomic config writes.
+7. **Scheduled Checks, History & Profiles**: OS-native background update checks and desktop notifications (`pw schedule`), persistent upgrade history with version rollback (`pw history`, `pw rollback`), and portable machine profile export/import (`pw export`, `pw import`).
+8. **Documented Exit Codes & Machine Outputs**: Stable exit codes (0, 1, 2, 3) and JSON schemas (`schema_version: "1.0.0"`).
 
-## Architecture
-- `main.go`: Entry point for the CLI tool. Points execution to the Cobra command tree.
-- `cmd/`: Houses the Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`).
-- `internal/`: Contains core logic separated by package managers.
-  - `internal/winget/`: Houses logic for interacting with the `winget` CLI to fetch updates and perform upgrades.
-    - **Note on Winget Parsing**: `winget upgrade` often outputs ANSI progress spinners and color codes. The parser strips ANSI escape sequences, explicitly slices off characters preceding the "Name" column, and validates column ordering. Exec calls also separate `Stdout` and `Stderr` to ensure warnings do not corrupt the parsed table. It then dynamically calculates padded `fmt.Sprintf` boundaries to display perfectly aligned, native-looking tables.
-  - Future modules will be placed in their respective `internal/<manager>` directories.
+## Architecture & Code Layout
+- `main.go` & `cmd/pw/main.go`: Entry points for the CLI tool (supporting both repo-root builds and `go install .../cmd/pw@latest`).
+- `cmd/`: Houses Cobra CLI commands (`root.go`, `check.go`, `upgrade.go`, `doctor.go`, `cleanup.go`, `pin.go`, `config.go`, `history.go`, `rollback.go`, `export.go`, `import.go`, `schedule.go`, `selfupdate.go`, `version.go`).
+  - `registry_common.go` / `registry_windows.go` / `registry_darwin.go` / `registry_linux.go` / `registry_other.go`: Platform-gated registration of default package managers.
+- `internal/`: Core business logic decoupled by subsystem and package manager:
+  - `internal/pm/`: Core `pm.Manager` interface, extension interfaces, `Registry`, and `Runner` abstraction.
+  - `internal/upgrade/`: Command pipeline (`Plan`, `Executor`, `Summary`, policy filtering, changelog previews, JSON serialization).
+  - `internal/version/`: Ecosystem-aware version comparison (`Compare`, `IsUpgrade`).
+  - `internal/config/`: Configuration and completion cache with atomic file I/O.
+  - `internal/history/`: Upgrade run history store and rollback metadata.
+  - `internal/profile/`: Portable `Patchfile` DSL and JSON machine profile parser/exporter.
+  - `internal/schedule/`: Native OS background task scheduling and desktop notifications.
+  - `internal/exitcodes/`: Standardized process exit codes (`ExitSuccess`, `ExitGeneralError`, `ExitUpgradeFailure`, `ExitCanceled`).
+  - `internal/httputil/`: Resilient HTTP client with retry backoff and offline support.
+  - `internal/<manager>/`: Concrete drivers (`brew`, `mas`, `winget`, `scoop`, `choco`, `psresource`, `apt`, `dnf`, `pacman`, `zypper`, `flatpak`, `snap`, `npm`, `pnpm`, `bun`, `dotnet`, `uv`, `pipx`, `cargo`, `rustup`, `gem`, `mise`, `asdf`, `vscode`).
+- `docs/`: Reference documentation (`env-vars.md`, `exit-codes.md`, `json-schema.md`, `adding-a-package-manager.md`, `code-signing.md`) and CLI reference (`docs/cli/`).
 
-## Development Guidelines
-- **Cross-Platform Readiness**: Even though the target is currently Windows, use Go's standard library cross-platform features where appropriate. If Windows-specific packages or syscalls are needed, isolate them or use build tags (`//go:build windows`).
-- **Exec calls**: For invoking package managers, use `os/exec`. Keep parsing logic robust, as CLI outputs can change. Stream standard output/error to the user during long-running tasks.
-- **Error Handling**: Gracefully handle errors when a package manager is not installed on the system.
-- **UI Consistency**: Maintain tabular alignment and spacing for terminal output to match the native feel of tools like `winget`.
+## Development & Testing Guidelines
+- **Cross-Platform Support**: Use Go's standard library cross-platform features (`os.UserConfigDir()`, `runtime.GOOS`). Isolate platform-specific features (e.g., Windows UAC elevation, `conhost.exe` launching) behind build tags (`//go:build windows` and `//go:build !windows`).
+- **Exec calls**: Always use `pm.Runner` / `os/exec`. Keep parsing logic robust, isolated in pure functions, and prefer machine-readable formats (`--json`, `--limit-output`) where available.
+- **Golden Fixture Tests**: All package manager parsers MUST have golden fixture tests in `internal/<manager>/golden_test.go` backed by `testdata/*.input` and `testdata/*.golden.json`. Use `-update` flag when updating parser baselines.
+- **Exit Codes**: Commands must return standard exit codes via `exitcodes.Determine(ctx, err)`:
+  - 0: Success
+  - 1: General / Operational / Configuration error
+  - 2: Upgrade failure (one or more packages failed)
+  - 3: Canceled / Interrupted
+- **Error Handling**: Gracefully handle errors when a package manager is not installed on the system; surface partial lookup failures as warnings rather than failing the entire run.
+- **UI Consistency**: Maintain tabular alignment and spacing for terminal output to match native system feel.
+- **CI/CD Validation Invariant**: Whenever changes, commits, or tags are pushed to the remote repository (`origin`), the agent must actively inspect the triggered GitHub Actions workflow runs (`https://api.github.com/repos/karan-banwasi/Patchwork/actions/runs`) and verify that all jobs (e.g., multi-OS tests across Windows, macOS, and Linux, as well as release builds) finish with status `completed` and conclusion `success` before marking any user task as completed. If CI fails, the agent must inspect job logs, resolve the root cause, and re-validate CI until green.

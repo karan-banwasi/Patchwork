@@ -1,0 +1,10 @@
+[
+  {
+    "name": "stable-x86_64-pc-windows-msvc",
+    "id": "stable-x86_64-pc-windows-msvc",
+    "version": "1.74.0",
+    "available_version": "1.74.1",
+    "source": "rustup",
+    "manager": "rustup"
+  }
+]

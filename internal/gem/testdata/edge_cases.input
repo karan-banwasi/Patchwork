@@ -1,0 +1,6 @@
+bundler (2.4.20 < 2.5.1)
+
+invalid$gem (1.0.0 < 2.0.0)
+samever (1.0.0 < 1.0.0)
+downgrade (2.0.0 < 1.0.0)
+malformed line

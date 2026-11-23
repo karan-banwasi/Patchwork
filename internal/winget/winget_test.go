@@ -9,6 +9,26 @@ import (
 	"github.com/karan-banwasi/patchwork/internal/pm"
 )
 
+func TestParseWingetOutput_CRLF(t *testing.T) {
+	sampleOutput := "Name                                   Id                                Version      Available  Source\r\n" +
+		"-------------------------------------------------------------------------------------------------------\r\n" +
+		"EpsonNet Print                         EPSON.EpsonNetPrint               3.2.1.0      3.3.1      winget\r\n" +
+		"Gemini                                 Google.GeminiDesktop              1.17.0       1.18.0     winget\r\n"
+
+	updates, err := parseWingetOutput(sampleOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates, got %d", len(updates))
+	}
+
+	if updates[0].Id != "EPSON.EpsonNetPrint" || updates[1].Id != "Google.GeminiDesktop" {
+		t.Errorf("unexpected updates: %+v", updates)
+	}
+}
+
 func TestWingetManager_Name(t *testing.T) {
 	mgr := NewWingetManager()
 	if mgr.Name() != "winget" {
@@ -246,14 +266,14 @@ func TestShouldOmitSilent(t *testing.T) {
 }
 
 func TestBuildUpgradeArgs(t *testing.T) {
-	psArgs := buildUpgradeArgs("Microsoft.PowerShell")
+	psArgs := buildUpgradeArgsWithOptions("Microsoft.PowerShell", true)
 	for _, arg := range psArgs {
 		if arg == "--silent" {
 			t.Errorf("expected --silent to be omitted for Microsoft.PowerShell, got args: %v", psArgs)
 		}
 	}
 
-	gitArgs := buildUpgradeArgs("Git.Git")
+	gitArgs := buildUpgradeArgsWithOptions("Git.Git", true)
 	hasSilent := false
 	for _, arg := range gitArgs {
 		if arg == "--silent" {
@@ -267,7 +287,7 @@ func TestBuildUpgradeArgs(t *testing.T) {
 }
 
 func TestBuildIsolatedUpgradeScript(t *testing.T) {
-	args := buildUpgradeArgs("Microsoft.PowerShell")
+	args := buildUpgradeArgsWithOptions("Microsoft.PowerShell", true)
 	script := buildIsolatedUpgradeScript(
 		`C:\Users\test\AppData\Local\Microsoft\WindowsApps\winget.exe`,
 		"Microsoft.PowerShell",
@@ -335,6 +355,9 @@ func TestBuildUpgradeArgsWithOptions_DisableAgreements(t *testing.T) {
 	for _, a := range args {
 		if strings.HasPrefix(a, "--accept-") {
 			t.Errorf("expected agreement flags to be omitted when acceptAgreements=false, got: %v", args)
+		}
+		if a == "--silent" {
+			t.Errorf("expected --silent to be omitted when acceptAgreements=false, got: %v", args)
 		}
 	}
 }

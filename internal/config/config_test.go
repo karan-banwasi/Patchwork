@@ -1,7 +1,10 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +95,510 @@ func TestConfig_UpdateCacheSaveLoad(t *testing.T) {
 
 	if _, ok := LoadUpdateCache(0); ok {
 		t.Errorf("expected cache miss when maxAge is 0")
+	}
+}
+
+func TestConfig_SaveTo_AtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	cfg := &Config{
+		PinnedPackages: []string{"Git.Git"},
+	}
+
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config atomically: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read dir: %v", err)
+	}
+
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config-") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("found leftover temporary file from atomic write: %s", e.Name())
+		}
+	}
+
+	// Overwrite existing file atomically
+	cfg.Pin("Microsoft.VisualStudioCode")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("failed to overwrite config atomically: %v", err)
+	}
+
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read dir: %v", err)
+	}
+
+	foundConfig := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config-") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("found leftover temporary file after overwrite: %s", e.Name())
+		}
+		if e.Name() == "config.json" {
+			foundConfig = true
+		}
+	}
+	if !foundConfig {
+		t.Errorf("expected config.json to exist")
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if len(loaded.PinnedPackages) != 2 {
+		t.Errorf("expected 2 pinned packages, got %d", len(loaded.PinnedPackages))
+	}
+}
+
+func TestConfig_LoadFrom_CorruptFailClosed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Write invalid JSON
+	if err := os.WriteFile(path, []byte("{ invalid-json-content: true, "), 0600); err != nil {
+		t.Fatalf("failed to write corrupt config: %v", err)
+	}
+
+	cfg, err := LoadFrom(path)
+	if err == nil {
+		t.Fatalf("expected error loading corrupted config, got nil error and cfg: %+v", cfg)
+	}
+	if cfg != nil {
+		t.Errorf("expected nil config on error, got: %+v", cfg)
+	}
+}
+
+func TestConfig_AcceptAgreementsPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+
+	// Default should be true
+	var emptyCfg *Config
+	if !emptyCfg.ShouldAcceptAgreements() {
+		t.Errorf("expected nil config ShouldAcceptAgreements to be true")
+	}
+
+	cfg1 := &Config{}
+	if !cfg1.ShouldAcceptAgreements() {
+		t.Errorf("expected unspecified AcceptAgreements to default to true")
+	}
+
+	// Set to false
+	fVal := false
+	cfg1.AcceptAgreements = &fVal
+	if err := cfg1.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if loaded.ShouldAcceptAgreements() {
+		t.Errorf("expected loaded config ShouldAcceptAgreements to be false")
+	}
+
+	// Set to true
+	tVal := true
+	loaded.AcceptAgreements = &tVal
+	if err := loaded.SaveTo(path); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	loaded2, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if !loaded2.ShouldAcceptAgreements() {
+		t.Errorf("expected loaded config ShouldAcceptAgreements to be true")
+	}
+}
+
+func TestConfig_UnmarshalFormats(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 1. Legacy string array format
+	legacyData := []byte(`{
+		"pinned_packages": ["git", "winget:Docker.DockerDesktop"]
+	}`)
+	path1 := filepath.Join(tmpDir, "legacy.json")
+	if err := os.WriteFile(path1, legacyData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg1, err := LoadFrom(path1)
+	if err != nil {
+		t.Fatalf("failed to load legacy config: %v", err)
+	}
+	if len(cfg1.Pins) != 2 || len(cfg1.PinnedPackages) != 2 {
+		t.Errorf("expected 2 pins, got pins=%d, pinned_packages=%d", len(cfg1.Pins), len(cfg1.PinnedPackages))
+	}
+	if !cfg1.IsPinnedForManager("winget", "Docker.DockerDesktop", "") {
+		t.Errorf("expected winget:Docker.DockerDesktop to be pinned")
+	}
+
+	// 2. Rich pins array format
+	exp := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	richData := []byte(fmt.Sprintf(`{
+		"pins": [
+			{"id": "node", "version": "<23", "reason": "driver break", "expires_at": %q},
+			{"id": "curl", "manager": "winget"}
+		],
+		"disabled_managers": ["cargo", "psresource"],
+		"defaults": {
+			"timeout": "45s",
+			"no_refresh": true
+		}
+	}`, exp.Format(time.RFC3339)))
+	path2 := filepath.Join(tmpDir, "rich.json")
+	if err := os.WriteFile(path2, richData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := LoadFrom(path2)
+	if err != nil {
+		t.Fatalf("failed to load rich config: %v", err)
+	}
+	if len(cfg2.Pins) != 2 {
+		t.Fatalf("expected 2 pins, got %d", len(cfg2.Pins))
+	}
+	if cfg2.Pins[0].Version != "<23" || cfg2.Pins[0].Reason != "driver break" {
+		t.Errorf("expected rich pin attributes preserved, got %+v", cfg2.Pins[0])
+	}
+	if len(cfg2.DisabledManagers) != 2 || cfg2.DisabledManagers[0] != "cargo" {
+		t.Errorf("expected disabled_managers preserved, got %v", cfg2.DisabledManagers)
+	}
+	if cfg2.Defaults.Timeout != "45s" || cfg2.Defaults.NoRefresh == nil || !*cfg2.Defaults.NoRefresh {
+		t.Errorf("expected defaults preserved, got %+v", cfg2.Defaults)
+	}
+
+	// 3. Map format for pins
+	mapData := []byte(`{
+		"pins": {
+			"python": {"version": "~3.11"},
+			"winget:vlc": {"reason": "stable"}
+		}
+	}`)
+	path3 := filepath.Join(tmpDir, "map.json")
+	if err := os.WriteFile(path3, mapData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg3, err := LoadFrom(path3)
+	if err != nil {
+		t.Fatalf("failed to load map format config: %v", err)
+	}
+	if len(cfg3.Pins) != 2 {
+		t.Fatalf("expected 2 pins from map format, got %d", len(cfg3.Pins))
+	}
+	pin, violated := cfg3.MatchPin("", "python", "python", "3.11.5")
+	if pin == nil || violated {
+		t.Errorf("expected python 3.11.5 to satisfy ~3.11 constraint (not violated)")
+	}
+	_, violated = cfg3.MatchPin("", "python", "python", "3.12.0")
+	if !violated {
+		t.Errorf("expected python 3.12.0 to violate ~3.11 constraint (violated)")
+	}
+}
+
+func TestConfig_MatchPin_ConstraintsAndExpiry(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-1 * time.Hour)
+	future := now.Add(24 * time.Hour)
+
+	cfg := &Config{}
+	// Unconditional pin
+	cfg.AddPinEntry(PinEntry{ID: "git"})
+	// Scoped pin with constraint
+	cfg.AddPinEntry(PinEntry{Manager: "npm", ID: "typescript", Version: "<5.0.0"})
+	// Expired pin
+	cfg.AddPinEntry(PinEntry{ID: "legacy-pkg", ExpiresAt: &expired})
+	// Active future expiry pin
+	cfg.AddPinEntry(PinEntry{ID: "temp-pkg", ExpiresAt: &future})
+
+	// 1. Unconditional pin
+	pin, violated := cfg.MatchPin("", "git", "git", "2.40.0")
+	if pin == nil || !violated {
+		t.Errorf("expected git to be unconditionally pinned and violated")
+	}
+
+	// 2. Version constraint satisfied -> not violated
+	pin, violated = cfg.MatchPin("npm", "typescript", "typescript", "4.9.5")
+	if pin == nil || violated {
+		t.Errorf("expected typescript 4.9.5 to satisfy <5.0.0 (violated=false)")
+	}
+
+	// 3. Version constraint violated -> violated
+	pin, violated = cfg.MatchPin("npm", "typescript", "typescript", "5.1.0")
+	if pin == nil || !violated {
+		t.Errorf("expected typescript 5.1.0 to violate <5.0.0 (violated=true)")
+	}
+
+	// 4. Different manager for scoped pin -> not matched
+	pin, violated = cfg.MatchPin("cargo", "typescript", "typescript", "5.1.0")
+	if pin != nil || violated {
+		t.Errorf("expected npm:typescript not to match cargo manager")
+	}
+
+	// 5. Expired pin -> active=false, violated=false
+	pin, violated = cfg.MatchPin("", "legacy-pkg", "legacy-pkg", "1.0.0")
+	if pin == nil || violated {
+		t.Errorf("expected expired pin not to violate upgrade (violated=false)")
+	}
+	if !pin.IsExpired() {
+		t.Errorf("expected pin.IsExpired() to return true")
+	}
+
+	// 6. Non-expired pin -> violated=true
+	pin, violated = cfg.MatchPin("", "temp-pkg", "temp-pkg", "2.0.0")
+	if pin == nil || !violated {
+		t.Errorf("expected active unexpired pin to be violated")
+	}
+}
+
+func TestConfig_GetSetValidation(t *testing.T) {
+	cfg := &Config{}
+
+	// Test defaults.timeout
+	if err := cfg.Set("defaults.timeout", "30s"); err != nil {
+		t.Fatalf("unexpected error setting defaults.timeout: %v", err)
+	}
+	val, err := cfg.Get("defaults.timeout")
+	if err != nil || val != "30s" {
+		t.Errorf("expected defaults.timeout=30s, got val=%v, err=%v", val, err)
+	}
+	// Invalid duration
+	if err := cfg.Set("defaults.timeout", "invalid-duration"); err == nil {
+		t.Errorf("expected error setting invalid duration")
+	}
+
+	// Test boolean flags
+	if err := cfg.Set("defaults.accept-agreements", "true"); err != nil {
+		t.Fatalf("unexpected error setting defaults.accept-agreements: %v", err)
+	}
+	val, err = cfg.Get("defaults.accept_agreements")
+	if err != nil || val != true {
+		t.Errorf("expected defaults.accept_agreements=true, got %v", val)
+	}
+	if err := cfg.Set("defaults.accept-agreements", "invalid-bool"); err == nil {
+		t.Errorf("expected error setting invalid bool")
+	}
+
+	if err := cfg.Set("defaults.trust_repository", true); err != nil {
+		t.Fatalf("unexpected error setting defaults.trust_repository: %v", err)
+	}
+	val, _ = cfg.Get("defaults.trust_repository")
+	if val != true {
+		t.Errorf("expected defaults.trust_repository=true, got %v", val)
+	}
+
+	if err := cfg.Set("defaults.no_refresh", true); err != nil {
+		t.Fatalf("unexpected error setting defaults.no_refresh: %v", err)
+	}
+	val, _ = cfg.Get("defaults.no_refresh")
+	if val != true {
+		t.Errorf("expected defaults.no_refresh=true, got %v", val)
+	}
+
+	// Test disabled_managers
+	if err := cfg.Set("disabled_managers", "cargo,psresource,apt,dnf,pacman,zypper,flatpak,snap,mas,pipx,gem,pnpm,bun,rustup,mise,asdf,vscode"); err != nil {
+		t.Fatalf("unexpected error setting disabled_managers: %v", err)
+	}
+	val, _ = cfg.Get("disabled_managers")
+	list, ok := val.([]string)
+	if !ok || len(list) != 17 || list[0] != "cargo" || list[1] != "psresource" {
+		t.Errorf("expected 17 disabled managers, got %v", val)
+	}
+	if err := cfg.Set("disabled_managers", "unknown-manager"); err == nil {
+		t.Errorf("expected error setting unknown manager name")
+	}
+
+	// Test defaults.channel
+	if err := cfg.Set("defaults.channel", "prerelease"); err != nil {
+		t.Fatalf("unexpected error setting defaults.channel: %v", err)
+	}
+	val, err = cfg.Get("defaults.channel")
+	if err != nil || val != "prerelease" {
+		t.Errorf("expected defaults.channel=prerelease, got val=%v, err=%v", val, err)
+	}
+	if err := cfg.Set("defaults.channel", "STABLE"); err != nil {
+		t.Fatalf("unexpected error setting defaults.channel=STABLE: %v", err)
+	}
+	val, _ = cfg.Get("defaults.channel")
+	if val != "stable" {
+		t.Errorf("expected normalized defaults.channel=stable, got %v", val)
+	}
+	if err := cfg.Set("defaults.channel", ""); err != nil {
+		t.Fatalf("unexpected error clearing defaults.channel: %v", err)
+	}
+	val, _ = cfg.Get("defaults.channel")
+	if val != "" {
+		t.Errorf("expected cleared defaults.channel=\"\", got %v", val)
+	}
+	if err := cfg.Set("defaults.channel", "nightly"); err == nil {
+		t.Errorf("expected error setting invalid defaults.channel")
+	}
+
+	// Test unknown key
+	if err := cfg.Set("invalid.key", "val"); err == nil {
+		t.Errorf("expected error setting unknown key")
+	}
+	if _, err := cfg.Get("invalid.key"); err == nil {
+		t.Errorf("expected error getting unknown key")
+	}
+}
+
+func TestConfig_DefaultsLevelAndExclude(t *testing.T) {
+	cfg := &Config{}
+
+	// Verify SupportedKeys includes defaults.level and defaults.exclude
+	hasLevel, hasExclude := false, false
+	for _, k := range SupportedKeys {
+		if k == "defaults.level" {
+			hasLevel = true
+		}
+		if k == "defaults.exclude" {
+			hasExclude = true
+		}
+	}
+	if !hasLevel || !hasExclude {
+		t.Fatalf("SupportedKeys missing defaults.level (%v) or defaults.exclude (%v)", hasLevel, hasExclude)
+	}
+
+	// Set and Get defaults.level (case-insensitive normalization)
+	if err := cfg.Set("defaults.level", "MINOR"); err != nil {
+		t.Fatalf("Set defaults.level failed: %v", err)
+	}
+	val, err := cfg.Get("defaults.level")
+	if err != nil || val != "minor" {
+		t.Errorf("expected defaults.level=minor, got val=%v, err=%v", val, err)
+	}
+	if err := cfg.Set("defaults.level", "invalid-level"); err == nil {
+		t.Errorf("expected error for invalid defaults.level")
+	}
+
+	// Set and Get defaults.exclude (comma-separated string and slice)
+	if err := cfg.Set("defaults.exclude", "npm:*, Microsoft.* , *beta*"); err != nil {
+		t.Fatalf("Set defaults.exclude failed: %v", err)
+	}
+	val, err = cfg.Get("defaults.exclude")
+	if err != nil {
+		t.Fatalf("Get defaults.exclude failed: %v", err)
+	}
+	excl, ok := val.([]string)
+	if !ok || len(excl) != 3 || excl[0] != "npm:*" || excl[1] != "Microsoft.*" || excl[2] != "*beta*" {
+		t.Errorf("unexpected defaults.exclude value: %#v", val)
+	}
+
+	// SaveTo and LoadFrom persistence when only level and exclude are set
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo failed: %v", err)
+	}
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom failed: %v", err)
+	}
+	if loaded.Defaults.Level != "minor" {
+		t.Errorf("expected persisted Defaults.Level=minor, got %q", loaded.Defaults.Level)
+	}
+	if len(loaded.Defaults.Exclude) != 3 || loaded.Defaults.Exclude[0] != "npm:*" {
+		t.Errorf("expected persisted Defaults.Exclude, got %#v", loaded.Defaults.Exclude)
+	}
+
+	// Clear level and exclude
+	if err := loaded.Set("defaults.level", ""); err != nil {
+		t.Fatalf("clearing defaults.level failed: %v", err)
+	}
+	if err := loaded.Set("defaults.exclude", []string{}); err != nil {
+		t.Fatalf("clearing defaults.exclude failed: %v", err)
+	}
+	if loaded.Defaults.Level != "" || len(loaded.Defaults.Exclude) != 0 {
+		t.Errorf("expected cleared level and exclude, got %+v", loaded.Defaults)
+	}
+}
+
+func TestConfig_DefaultsChannelSaveLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+
+	cfg := &Config{}
+	if err := cfg.Set("defaults.channel", "prerelease"); err != nil {
+		t.Fatalf("Set defaults.channel failed: %v", err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo failed: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom failed: %v", err)
+	}
+	if loaded.Defaults.Channel != "prerelease" {
+		t.Errorf("expected loaded Defaults.Channel=prerelease, got %q", loaded.Defaults.Channel)
+	}
+
+	// Clearing channel should omit empty defaults block when no other defaults are set
+	if err := loaded.Set("defaults.channel", ""); err != nil {
+		t.Fatalf("clearing channel failed: %v", err)
+	}
+	if err := loaded.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo after clearing failed: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if strings.Contains(string(raw), `"defaults"`) {
+		t.Errorf("expected empty defaults block to be omitted, got: %s", string(raw))
+	}
+}
+
+func TestConfig_DisabledManagersAliasesAndWhitespacePaths(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Set("disabled_managers", "psresourceget,uv-tool,dotnet-tool"); err != nil {
+		t.Fatalf("expected valid aliases to be accepted for disabled_managers, got: %v", err)
+	}
+	val, _ := cfg.Get("disabled_managers")
+	list, ok := val.([]string)
+	if !ok || len(list) != 3 || list[0] != "psresourceget" || list[1] != "uv-tool" || list[2] != "dotnet-tool" {
+		t.Errorf("unexpected disabled_managers list: %#v", val)
+	}
+
+	// Whitespace-only env vars should fall back to default paths rather than returning whitespace.
+	t.Setenv("PATCHWORK_CONFIG", "   ")
+	cfgPath, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath failed: %v", err)
+	}
+	if strings.TrimSpace(cfgPath) == "" || cfgPath == "   " {
+		t.Errorf("expected ConfigPath to ignore whitespace-only PATCHWORK_CONFIG, got %q", cfgPath)
+	}
+
+	t.Setenv("PATCHWORK_CACHE", "   ")
+	cachePath := CachePath()
+	if strings.TrimSpace(cachePath) == "" || cachePath == "   " {
+		t.Errorf("expected CachePath to ignore whitespace-only PATCHWORK_CACHE, got %q", cachePath)
+	}
+}
+
+func TestConfig_MatchPin_ExpiredFollowedByActive(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-1 * time.Hour)
+	future := now.Add(24 * time.Hour)
+
+	cfg := &Config{}
+	cfg.AddPinEntry(PinEntry{ID: "git", ExpiresAt: &expired})
+	cfg.AddPinEntry(PinEntry{Manager: "winget", ID: "git", ExpiresAt: &future})
+
+	pin, violated := cfg.MatchPin("winget", "git", "Git", "2.45.0")
+	if !violated || pin == nil || pin.Manager != "winget" {
+		t.Errorf("expected active winget:git pin to match after expired global git pin, got pin=%+v violated=%v", pin, violated)
+	}
+
+	// Different manager only matches the expired global pin
+	pin2, violated2 := cfg.MatchPin("scoop", "git", "Git", "2.45.0")
+	if violated2 || pin2 == nil || !pin2.IsExpired() {
+		t.Errorf("expected expired global pin with violated=false for scoop, got pin=%+v violated=%v", pin2, violated2)
 	}
 }

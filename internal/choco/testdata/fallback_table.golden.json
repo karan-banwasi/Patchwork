@@ -1,0 +1,18 @@
+[
+  {
+    "name": "7zip.install",
+    "id": "7zip.install",
+    "version": "22.01",
+    "available_version": "23.01",
+    "source": "chocolatey",
+    "manager": "choco"
+  },
+  {
+    "name": "python3",
+    "id": "python3",
+    "version": "3.10.0",
+    "available_version": "3.11.0",
+    "source": "chocolatey",
+    "manager": "choco"
+  }
+]

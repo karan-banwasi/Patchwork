@@ -1,0 +1,18 @@
+[
+  {
+    "name": "curl",
+    "id": "curl",
+    "version": "7.88.1",
+    "available_version": "8.0.1",
+    "source": "scoop",
+    "manager": "scoop"
+  },
+  {
+    "name": "7zip",
+    "id": "7zip",
+    "version": "22.01",
+    "available_version": "23.01",
+    "source": "scoop",
+    "manager": "scoop"
+  }
+]

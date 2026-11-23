@@ -14,6 +14,10 @@ func completeManagerNames(cmd *cobra.Command, args []string, toComplete string) 
 	return reg.ManagerNames(), cobra.ShellCompDirectiveNoFileComp
 }
 
+func completeLevelNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return []string{"patch", "minor", "major"}, cobra.ShellCompDirectiveNoFileComp
+}
+
 // completeAvailablePackageIDs reads strictly from the local update cache (populated by `pw check`)
 // so that Tab completion never triggers network requests or mutates package manager state.
 func completeAvailablePackageIDs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -26,7 +30,7 @@ func completeAvailablePackageIDs(cmd *cobra.Command, args []string, toComplete s
 	if !ok {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	updates, _ = filterOutPinned(updates)
+	updates, _, _ = filterOutPinned(updates)
 	var completions []string
 	for _, u := range updates {
 		if alreadySelected[strings.ToLower(u.Id)] {

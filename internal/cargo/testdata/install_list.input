@@ -1,0 +1,6 @@
+bat v0.24.0:
+    bat.exe
+ripgrep v14.1.0:
+    rg.exe
+my-local-tool v0.1.0 (C:\projects\my-local-tool):
+    my-local-tool.exe

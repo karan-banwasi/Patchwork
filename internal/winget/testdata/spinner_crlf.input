@@ -1,0 +1,4 @@
+/ Name                                   Id                                Version      Available  Source
+-------------------------------------------------------------------------------------------------------
+EpsonNet Print                         EPSON.EpsonNetPrint               3.2.1.0      3.3.1      winget
+Gemini                                 Google.GeminiDesktop              1.17.0       1.18.0     winget
