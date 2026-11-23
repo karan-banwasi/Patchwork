@@ -59,7 +59,7 @@ jobs:
         run: |
           nix build .#default
           ./result/bin/pw --help
-          VERSION_OUT=$(./result/bin/pw version)
+          VERSION_OUT=$(./result/bin/pw version 2>&1)
           echo "$VERSION_OUT"
           echo "$VERSION_OUT" | grep -F "v0.3.2"
           echo "$VERSION_OUT" | grep -F "go1.27.4"
