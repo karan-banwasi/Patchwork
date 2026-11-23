@@ -50,9 +50,7 @@ jobs:
           send-statistics: false
 
       - name: Inspect Flake Metadata
-        run: |
-          nix flake metadata --json
-          rm -f flake.lock
+        run: nix flake metadata
 
       - name: Check Flake
         run: nix flake check

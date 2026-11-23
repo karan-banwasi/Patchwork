@@ -54,7 +54,7 @@
             inherit version;
             src = ./.;
 
-            vendorHash = pkgs.lib.fakeHash;
+            vendorHash = "sha256-senbhCHNhX66J00p6JzZjY4Hk6N3neGELRGwpDfhCGI=";
 
             subPackages = [ "cmd/pw" ];
 
