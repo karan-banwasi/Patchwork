@@ -79,7 +79,7 @@ func (d *DotnetManager) Path() (string, error) {
 }
 
 func (d *DotnetManager) Version(ctx context.Context) (string, error) {
-	exe, err := dotnetPath()
+	exe, err := d.resolveExe()
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +132,7 @@ func dotnetPath() (string, error) {
 
 // GetAvailableUpdatesWithWarnings lists global .NET tools, searches NuGet, and collects warnings.
 func (d *DotnetManager) GetAvailableUpdatesWithWarnings(ctx context.Context) ([]pm.PackageUpdate, []error, error) {
-	exe, err := dotnetPath()
+	exe, err := d.resolveExe()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -273,7 +273,7 @@ func (d *DotnetManager) UpgradePackage(ctx context.Context, id string) error {
 	if err := d.ValidateID(id); err != nil {
 		return err
 	}
-	exe, err := dotnetPath()
+	exe, err := d.resolveExe()
 	if err != nil {
 		return err
 	}
